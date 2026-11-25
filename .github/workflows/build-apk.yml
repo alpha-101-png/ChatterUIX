@@ -28,6 +28,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       - name: Install dependencies
         run: npm install
@@ -43,5 +45,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChatterUI-CharacterFolders-APK
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 14
