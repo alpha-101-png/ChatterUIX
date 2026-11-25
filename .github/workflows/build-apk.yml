@@ -1,0 +1,47 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - character-folders
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --non-interactive
+
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease -x lintVitalAnalyzeRelease --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatterUI-CharacterFolders-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
