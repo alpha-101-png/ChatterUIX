@@ -54,6 +54,7 @@ module.exports = {
                     android: {
                         largeHeap: true,
                         usesCleartextTraffic: true,
+                        buildArchs: ['arm64-v8a'],
                         enableProguardInReleaseBuilds: true,
                         enableShrinkResourcesInReleaseBuilds: true,
                         useLegacyPackaging: true,
