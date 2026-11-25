@@ -5,12 +5,15 @@ import { View } from 'react-native'
 
 import Alert from '@components/views/Alert'
 import ContextMenu from '@components/views/ContextMenu'
+import { useBottomSheetRef } from '@components/views/BottomSheet'
 import { useConnectionStore } from '@lib/engine/API/connectionStore'
 import { CharacterCardSummary, Characters } from '@lib/state/characters'
 import { Chats } from '@lib/state/chat'
 import { Instructs } from '@lib/state/Instructs'
 import { Logger } from '@lib/state/Logger'
 import { useSamplerStore } from '@lib/state/samplerStore'
+
+import FolderPicker from './FolderPicker'
 
 type CharacterActionsMenuProps = {
     character: CharacterCardSummary
@@ -26,6 +29,7 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
     const { t } = useTranslation()
     const path = usePathname()
     const router = useRouter()
+    const folderPickerRef = useBottomSheetRef()
 
     const { setId } = Chats.useChat()
     const selectUserCard = Characters.useUserStore((state) => state.setCard)
@@ -127,33 +131,52 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
         router.push('/characterEditor')
     }
 
+    const handleMoveToFolder = (close: () => void) => {
+        close()
+        folderPickerRef.current?.open()
+    }
+
     return (
-        <ContextMenu disabled={path !== '/'} placement="center">
-            <ContextMenu.Trigger onPress={handleOpenChat} longPress delayLongPress={300}>
-                <View pointerEvents="none">{children}</View>
-            </ContextMenu.Trigger>
-            <ContextMenu.Body>
-                <ContextMenu.Button
-                    label={t('common.actions.edit')}
-                    icon="edit"
-                    closeOnPress={false}
-                    onPress={handleEditCard}
-                />
-                <ContextMenu.Button
-                    label={t('common.actions.clone')}
-                    icon="copy"
-                    closeOnPress={false}
-                    onPress={handleDuplicateCard}
-                />
-                <ContextMenu.Button
-                    label={t('common.actions.delete')}
-                    icon="delete"
-                    closeOnPress={false}
-                    onPress={handleDeleteCard}
-                    variant="warning"
-                />
-            </ContextMenu.Body>
-        </ContextMenu>
+        <>
+            <ContextMenu disabled={path !== '/'} placement="center">
+                <ContextMenu.Trigger onPress={handleOpenChat} longPress delayLongPress={300}>
+                    <View pointerEvents="none">{children}</View>
+                </ContextMenu.Trigger>
+                <ContextMenu.Body>
+                    <ContextMenu.Button
+                        label={t('common.actions.edit')}
+                        icon="edit"
+                        closeOnPress={false}
+                        onPress={handleEditCard}
+                    />
+                    <ContextMenu.Button
+                        label={t('common.actions.clone')}
+                        icon="copy"
+                        closeOnPress={false}
+                        onPress={handleDuplicateCard}
+                    />
+                    <ContextMenu.Button
+                        label={t('character.folders.actions.moveToFolder')}
+                        icon="folder"
+                        closeOnPress={false}
+                        onPress={handleMoveToFolder}
+                    />
+                    <ContextMenu.Button
+                        label={t('common.actions.delete')}
+                        icon="delete"
+                        closeOnPress={false}
+                        onPress={handleDeleteCard}
+                        variant="warning"
+                    />
+                </ContextMenu.Body>
+            </ContextMenu>
+
+            <FolderPicker
+                ref={folderPickerRef}
+                characterId={character.id}
+                currentFolderId={character.folderId}
+            />
+        </>
     )
 }
 

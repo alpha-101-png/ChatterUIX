@@ -2,23 +2,27 @@ import { count, eq, notInArray } from 'drizzle-orm'
 import { useFocusEffect } from 'expo-router'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BackHandler, Text, View } from 'react-native'
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useMMKVBoolean } from 'react-native-mmkv'
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated'
 import { useShallow } from 'zustand/react/shallow'
+import AntDesign from '@react-native-vector-icons/ant-design/static'
 
 import IconButton from '@components/buttons/IconButton'
 import ListEditorSheet from '@components/input/ListEditorSheet'
 import ThemedTextInput from '@components/input/ThemedTextInput'
+import { useBottomSheetRef } from '@components/views/BottomSheet'
 import { db } from '@db/db'
 import { characterTags, tags } from '@db/schema'
 import { AppSettings } from '@lib/constants/appSettings'
 import { useLiveQueryAsync } from '@lib/hooks/liveQuery'
+import { Characters } from '@lib/state/characters'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { Logger } from '@lib/state/Logger'
 import { TagHider } from '@lib/state/TagHider'
 import { Theme } from '@lib/theme/ThemeManager'
 
+import FolderManagerSheet from './FolderManagerSheet'
 import SortButton from './SortButton'
 
 type CharacterListHeaderProps = {
@@ -27,22 +31,44 @@ type CharacterListHeaderProps = {
 
 const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength }) => {
     const { t } = useTranslation()
-    const [useTagHider, setUseTagHider] = useMMKVBoolean(AppSettings.UseTagHider)
-    const { showSearch, setShowSearch, textFilter, setTextFilter, tagFilter, setTagFilter } =
-        useCharacterSortStore(
-            useShallow((state) => ({
-                showSearch: state.showSearch,
-                setShowSearch: state.setShowSearch,
-                textFilter: state.textFilter,
-                setTextFilter: state.setTextFilter,
-                tagFilter: state.tagFilter,
-                setTagFilter: state.setTagFilter,
-            }))
-        )
-
     const { color } = Theme.useTheme()
+    const folderManagerRef = useBottomSheetRef()
+
+    const [useTagHider, setUseTagHider] = useMMKVBoolean(AppSettings.UseTagHider)
+    const {
+        showSearch,
+        setShowSearch,
+        textFilter,
+        setTextFilter,
+        tagFilter,
+        setTagFilter,
+        currentFolderId,
+        setCurrentFolder,
+    } = useCharacterSortStore(
+        useShallow((state) => ({
+            showSearch: state.showSearch,
+            setShowSearch: state.setShowSearch,
+            textFilter: state.textFilter,
+            setTextFilter: state.setTextFilter,
+            tagFilter: state.tagFilter,
+            setTagFilter: state.setTagFilter,
+            currentFolderId: state.currentFolderId,
+            setCurrentFolder: state.setCurrentFolder,
+        }))
+    )
+
     const [showTags, setShowTags] = useMMKVBoolean(AppSettings.ShowTags)
     const hiddenTags = TagHider.useHiddenTags()
+
+    // Live folder name when inside a folder
+    const { data: folderData } = useLiveQueryAsync(Characters.db.folders.liveList(), {
+        key: ['folder-list-header'],
+        watch: [{ table: 'character_folders' }],
+    })
+    const currentFolder =
+        typeof currentFolderId === 'number'
+            ? (folderData.find((f) => f.id === currentFolderId) ?? null)
+            : null
 
     const { data } = useLiveQueryAsync(
         db
@@ -72,10 +98,73 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
         }, [setShowSearch, setTextFilter, showSearch])
     )
 
-    if (resultLength === 0 && !showSearch) return
+    if (resultLength === 0 && !showSearch && currentFolderId === undefined) return
 
     return (
         <>
+            {/* Folder breadcrumb bar */}
+            <Animated.View
+                layout={LinearTransition.duration(200)}
+                style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingLeft: 16,
+                    paddingRight: 8,
+                    paddingBottom: 8,
+                    columnGap: 8,
+                }}>
+                {/* "All" pill — always shown */}
+                <Pressable
+                    onPress={() => setCurrentFolder(undefined)}
+                    style={({ pressed }) => [
+                        styles.pill,
+                        {
+                            backgroundColor:
+                                currentFolderId === undefined
+                                    ? color.primary._500
+                                    : color.neutral._200,
+                            opacity: pressed ? 0.7 : 1,
+                        },
+                    ]}>
+                    <Text
+                        style={[
+                            styles.pillText,
+                            {
+                                color:
+                                    currentFolderId === undefined ? color.text._100 : color.text._400,
+                            },
+                        ]}>
+                        {t('character.folders.allCharacters')}
+                    </Text>
+                </Pressable>
+
+                {/* Current folder crumb */}
+                {currentFolder && (
+                    <Animated.View
+                        entering={FadeIn.duration(150)}
+                        exiting={FadeOut.duration(100)}
+                        style={{ flexDirection: 'row', alignItems: 'center', columnGap: 6 }}>
+                        <AntDesign name="right" size={12} color={color.text._500} />
+                        <View
+                            style={[styles.pill, { backgroundColor: color.primary._500 }]}>
+                            <Text style={[styles.pillText, { color: color.text._100 }]}>
+                                {currentFolder.name}
+                            </Text>
+                        </View>
+                    </Animated.View>
+                )}
+
+                <View style={{ flex: 1 }} />
+
+                {/* Manage folders button */}
+                <IconButton
+                    iconName="folder"
+                    variant="tertiary"
+                    onPress={() => folderManagerRef.current?.open()}
+                    iconStyle={{ color: color.text._500 }}
+                />
+            </Animated.View>
+
             <View
                 style={{
                     flexDirection: 'row',
@@ -184,8 +273,22 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                     </Animated.View>
                 )}
             </Animated.View>
+
+            <FolderManagerSheet ref={folderManagerRef} />
         </>
     )
 }
 
 export default CharacterListHeader
+
+const styles = StyleSheet.create({
+    pill: {
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 999,
+    },
+    pillText: {
+        fontSize: 13,
+        fontWeight: '500',
+    },
+})

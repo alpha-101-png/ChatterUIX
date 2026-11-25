@@ -1,8 +1,10 @@
-import { and, asc, desc, eq, gte, inArray, like, notExists, notInArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, like, notExists, notInArray, sql } from 'drizzle-orm'
 import { t } from 'i18next'
 
 import { db as database } from '@db/db'
 import {
+    characterFolderMembers,
+    characterFolders,
     characterGreetings,
     characterTags,
     characters,
@@ -179,6 +181,7 @@ namespace live {
         searchText = '',
         includedTags = [],
         hiddenTags = [],
+        folderId,
     }: CharacterCardListPageOptions = {}) => {
         const sort = sortDirection === 'asc' ? asc : desc
         return database.query.characters.findMany({
@@ -225,7 +228,37 @@ namespace live {
                           )
                         : undefined
 
-                return and(base, search, hidden, filteredTags)
+                // Folder filtering:
+                // folderId === undefined → no filter (all characters)
+                // folderId === number    → only characters in that folder
+                // folderId === null      → only characters with no folder membership
+                const folderCondition =
+                    folderId !== undefined
+                        ? folderId === null
+                            ? notExists(
+                                  database
+                                      .select()
+                                      .from(characterFolderMembers)
+                                      .where(
+                                          eq(characterFolderMembers.character_id, characters.id)
+                                      )
+                              )
+                            : // number: character must exist in characterFolderMembers for this folder
+                              gte(
+                                  database
+                                      .select({ count: sql<number>`count(*)` })
+                                      .from(characterFolderMembers)
+                                      .where(
+                                          and(
+                                              eq(characterFolderMembers.character_id, characters.id),
+                                              eq(characterFolderMembers.folder_id, folderId)
+                                          )
+                                      ),
+                                  1
+                              )
+                        : undefined
+
+                return and(base, search, hidden, filteredTags, folderCondition)
             },
             with: {
                 tags: {
@@ -261,6 +294,11 @@ namespace live {
                     },
                 },
                 links: true,
+                folder_membership: {
+                    columns: {
+                        folder_id: true,
+                    },
+                },
             },
             orderBy: sortBy === 'name' ? sort(characters.name) : sort(characters.last_modified),
             limit: limit,
@@ -518,4 +556,89 @@ namespace remove {
 
 export type CharacterCardQuery = ReturnType<typeof live.card>
 
-export const db = { query: query, live: live, create: create, update: update, delete: remove }
+// ---------------------------------------------------------------------------
+// Folder CRUD
+// ---------------------------------------------------------------------------
+
+namespace folders {
+    /** List all folders (top-level and nested). */
+    export const list = () => {
+        return database.query.characterFolders.findMany({
+            orderBy: characterFolders.name,
+        })
+    }
+
+    /** Live query: all folders, ordered by name. */
+    export const liveList = () => {
+        return database.query.characterFolders.findMany({
+            orderBy: characterFolders.name,
+            with: {
+                members: {
+                    columns: { character_id: true },
+                },
+            },
+        })
+    }
+
+    /** Create a new folder. Returns the new folder id. */
+    export const create = async (name: string, parentId?: number) => {
+        const [{ id }] = await database
+            .insert(characterFolders)
+            .values({ name, parent_id: parentId ?? null })
+            .returning({ id: characterFolders.id })
+        return id
+    }
+
+    /** Rename a folder. */
+    export const rename = async (folderId: number, name: string) => {
+        await database
+            .update(characterFolders)
+            .set({ name })
+            .where(eq(characterFolders.id, folderId))
+    }
+
+    /** Delete a folder. Members' rows are cascade-deleted; characters are unaffected. */
+    export const remove = async (folderId: number) => {
+        await database.delete(characterFolders).where(eq(characterFolders.id, folderId))
+    }
+
+    /**
+     * Move a character into a folder (or remove it from all folders when
+     * `folderId` is `null`).  Uses an upsert to enforce the single-folder
+     * constraint (the unique index on `character_id`).
+     */
+    export const moveCharacter = async (characterId: number, folderId: number | null) => {
+        if (folderId === null) {
+            // Remove from any folder
+            await database
+                .delete(characterFolderMembers)
+                .where(eq(characterFolderMembers.character_id, characterId))
+        } else {
+            // Insert or replace (upsert on the unique character_id column)
+            await database
+                .insert(characterFolderMembers)
+                .values({ character_id: characterId, folder_id: folderId })
+                .onConflictDoUpdate({
+                    target: characterFolderMembers.character_id,
+                    set: { folder_id: folderId },
+                })
+        }
+    }
+
+    /** Return the folder a character belongs to, or undefined. */
+    export const membershipOf = async (characterId: number) => {
+        return database.query.characterFolderMembers.findFirst({
+            where: eq(characterFolderMembers.character_id, characterId),
+            with: { folder: true },
+        })
+    }
+}
+
+export const db = {
+    query: query,
+    live: live,
+    create: create,
+    update: update,
+    delete: remove,
+    folders: folders,
+}

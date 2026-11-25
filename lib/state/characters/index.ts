@@ -14,4 +14,5 @@ export namespace Characters {
     export const getCardImageUri = characterImageUri
     export const actions = characterActions
     export const toCharacterCardV2 = convertToCharacterCardV2
+    export const folders = characterDb.folders
 }

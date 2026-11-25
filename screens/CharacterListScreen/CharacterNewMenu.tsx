@@ -26,6 +26,7 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
 
     const router = useRouter()
     const inputRef = useBottomSheetRef()
+    const newFolderRef = useBottomSheetRef()
 
     const handleCreateCharacter = async (text: string) => {
         if (!text) {
@@ -43,6 +44,15 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
         }
     }
 
+    const handleCreateFolder = async (name: string) => {
+        if (!name.trim()) {
+            Logger.errorToast(t('character.folders.errors.nameEmpty'))
+            return
+        }
+        await Characters.db.folders.create(name.trim())
+        Logger.info(t('character.folders.created', { name: name.trim() }))
+    }
+
     return (
         <>
             <InputSheet
@@ -53,6 +63,18 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
                     text.length === 0 ? t('character.list.errors.nameCannotBeEmpty') : ''
                 }
                 placeholder="Name..."
+                autoFocus
+                confirmLabel={t('common.actions.create')}
+            />
+
+            <InputSheet
+                ref={newFolderRef}
+                title={t('character.folders.actions.createFolder')}
+                onConfirm={handleCreateFolder}
+                verifyText={(text) =>
+                    text.trim().length === 0 ? t('character.folders.errors.nameEmpty') : ''
+                }
+                placeholder={t('character.folders.namePlaceholder')}
                 autoFocus
                 confirmLabel={t('common.actions.create')}
             />
@@ -78,6 +100,13 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
                             inputRef.current?.open()
                         }}
                         icon="edit"
+                    />
+                    <ContextMenu.Button
+                        label={t('character.folders.actions.createFolder')}
+                        onPress={() => {
+                            newFolderRef.current?.open()
+                        }}
+                        icon="folder"
                     />
                 </ContextMenu.Body>
             </ContextMenu>

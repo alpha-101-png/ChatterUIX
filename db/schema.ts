@@ -10,6 +10,30 @@ import {
     unique,
 } from 'drizzle-orm/sqlite-core'
 
+// CHARACTER FOLDERS
+
+export const characterFolders = sqliteTable('character_folders', {
+    id: integer('id', { mode: 'number' }).notNull().primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    // nullable self-reference: null means top-level folder
+    parent_id: integer('parent_id', { mode: 'number' }),
+})
+
+export const characterFolderMembers = sqliteTable(
+    'character_folder_members',
+    {
+        // unique so each character belongs to at most one folder
+        character_id: integer('character_id', { mode: 'number' })
+            .notNull()
+            .unique()
+            .references(() => characters.id, { onDelete: 'cascade' }),
+        folder_id: integer('folder_id', { mode: 'number' })
+            .notNull()
+            .references(() => characterFolders.id, { onDelete: 'cascade' }),
+    },
+    (table) => [primaryKey({ columns: [table.character_id, table.folder_id] })]
+)
+
 // TAVERN V2 SPEC
 
 export const characters = sqliteTable('characters', {
@@ -64,12 +88,37 @@ export const characterTags = sqliteTable(
     (table) => [primaryKey({ columns: [table.character_id, table.tag_id] })]
 )
 
-export const characterRelations = relations(characters, ({ many }) => ({
+export const characterRelations = relations(characters, ({ many, one }) => ({
     alternate_greetings: many(characterGreetings),
     tags: many(characterTags),
     lorebooks: many(characterLorebooks),
     chats: many(chats),
     links: many(characterLinks),
+    folder_membership: one(characterFolderMembers, {
+        fields: [characters.id],
+        references: [characterFolderMembers.character_id],
+    }),
+}))
+
+export const characterFolderRelations = relations(characterFolders, ({ many, one }) => ({
+    members: many(characterFolderMembers),
+    parent: one(characterFolders, {
+        fields: [characterFolders.parent_id],
+        references: [characterFolders.id],
+        relationName: 'folder_parent',
+    }),
+    children: many(characterFolders, { relationName: 'folder_parent' }),
+}))
+
+export const characterFolderMemberRelations = relations(characterFolderMembers, ({ one }) => ({
+    character: one(characters, {
+        fields: [characterFolderMembers.character_id],
+        references: [characters.id],
+    }),
+    folder: one(characterFolders, {
+        fields: [characterFolderMembers.folder_id],
+        references: [characterFolders.id],
+    }),
 }))
 
 export const greetingsRelations = relations(characterGreetings, ({ one }) => ({

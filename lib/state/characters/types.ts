@@ -15,6 +15,7 @@ export type CharacterCardSummary = {
     last_modified: number
     tags: string[]
     links: CharacterCard['links']
+    folderId?: number | null
     latestSwipeText?: string
     latestMessageName?: string
     latestChatId?: number
@@ -34,6 +35,12 @@ export type CharacterCardListPageOptions = {
     searchText?: string
     includedTags?: string[]
     hiddenTags?: string[]
+    /**
+     * - `undefined` → no folder filter (show all characters)
+     * - `number`    → show only characters in this folder
+     * - `null`      → show only characters with no folder assignment
+     */
+    folderId?: number | null
 }
 
 export type CreateCardDatabaseOptions = Partial<
