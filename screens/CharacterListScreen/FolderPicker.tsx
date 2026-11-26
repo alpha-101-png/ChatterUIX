@@ -11,7 +11,8 @@ import { Characters } from '@lib/state/characters'
 
 type FolderPickerProps = {
     ref: BottomSheetRef
-    characterId: number
+    characterId?: number
+    characterIds?: number[]
     currentFolderId: number | null | undefined
     onMoved?: () => void
 }
@@ -19,6 +20,7 @@ type FolderPickerProps = {
 const FolderPicker = ({
     ref,
     characterId,
+    characterIds,
     currentFolderId,
     onMoved,
 }: FolderPickerProps) => {
@@ -30,15 +32,17 @@ const FolderPicker = ({
     })
 
     const handleSelect = async (folderId: number | null) => {
-        await Characters.db.folders.moveCharacter(characterId, folderId)
-        onMoved?.()
+        // Batch move when characterIds is provided; otherwise single move
+        const ids = characterIds ?? (characterId !== undefined ? [characterId] : [])
+        await Characters.db.folders.moveCharacters(ids, folderId)
         ref.current?.close()
+        onMoved?.()
     }
 
     return (
         <BottomSheet ref={ref} sheetStyle={{ maxHeight: '80%' }}>
             <BottomSheetHeader
-                title={t('character.folders.picker.title')}
+                title={t('character.folders.picker.title', 'Move to Folder')}
                 style={{ paddingHorizontal: 16, paddingVertical: 16 }}
             />
             <EdgeFadeFlatList
@@ -53,13 +57,13 @@ const FolderPicker = ({
                         onPress={() => void handleSelect(null)}
                         style={{ paddingHorizontal: 16, paddingVertical: 14, minHeight: 48 }}>
                         <TText color={currentFolderId === null ? '100' : '400'}>
-                            {t('character.folders.picker.noFolder')}
+                            {t('character.folders.picker.noFolder', 'Ungrouped')}
                         </TText>
                     </ListButton>
                 }
                 ListEmptyComponent={
                     <View style={{ paddingVertical: 12 }}>
-                        <TText color="400">{t('character.folders.empty')}</TText>
+                        <TText color="400">{t('character.folders.empty', 'No folders yet')}</TText>
                     </View>
                 }
                 renderItem={({ item }) => {
@@ -77,7 +81,7 @@ const FolderPicker = ({
             <BottomSheetControls>
                 <BottomSheetButton
                     variant="secondary"
-                    label={t('common.actions.close')}
+                    label={t('common.actions.close', 'Close')}
                     onPress={() => ref.current?.close()}
                 />
             </BottomSheetControls>

@@ -625,6 +625,49 @@ namespace folders {
         }
     }
 
+    /** Live query: count of characters that do not belong to any folder. */
+    export const ungroupedCount = () => {
+        return database
+            .select({ count: sql<number>`count(*)` })
+            .from(characters)
+            .where(
+                and(
+                    eq(characters.type, 'character'),
+                    notExists(
+                        database
+                            .select()
+                            .from(characterFolderMembers)
+                            .where(eq(characterFolderMembers.character_id, characters.id))
+                    )
+                )
+            )
+    }
+
+    /**
+     * Batch-move multiple characters into a folder (or remove them from all
+     * folders when `folderId` is `null`).
+     */
+    export const moveCharacters = async (characterIds: number[], folderId: number | null) => {
+        if (characterIds.length === 0) return
+        await database.transaction(async (tx) => {
+            if (folderId === null) {
+                await tx
+                    .delete(characterFolderMembers)
+                    .where(inArray(characterFolderMembers.character_id, characterIds))
+            } else {
+                for (const characterId of characterIds) {
+                    await tx
+                        .insert(characterFolderMembers)
+                        .values({ character_id: characterId, folder_id: folderId })
+                        .onConflictDoUpdate({
+                            target: characterFolderMembers.character_id,
+                            set: { folder_id: folderId },
+                        })
+                }
+            }
+        })
+    }
+
     /** Return the folder a character belongs to, or undefined. */
     export const membershipOf = async (characterId: number) => {
         return database.query.characterFolderMembers.findFirst({

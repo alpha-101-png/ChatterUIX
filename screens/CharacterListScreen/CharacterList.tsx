@@ -1,5 +1,6 @@
 import { usePathname } from 'expo-router'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { View } from 'react-native'
 import Animated, { LinearTransition } from 'react-native-reanimated'
 import { useShallow } from 'zustand/react/shallow'
@@ -11,6 +12,7 @@ import HeaderButton from '@components/views/HeaderButton'
 import HeaderTitle from '@components/views/HeaderTitle'
 import { useLiveQueryAsync } from '@lib/hooks/liveQuery'
 import { Characters, CharacterCardSummary } from '@lib/state/characters'
+import { useSelectionStore } from '@lib/state/characters/selectionStore'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { TagHider } from '@lib/state/TagHider'
 
@@ -20,17 +22,19 @@ import CharacterNewMenu from './CharacterNewMenu'
 import CharactersEmpty from './CharactersEmpty'
 import CharactersSearchEmpty from './CharactersSearchEmpty'
 import FolderListing, { type FolderListingItem } from './FolderListing'
+import SelectionBar from './SelectionBar'
 
 const PAGE_SIZE = 30
 
 // ---------------------------------------------------------------------------
-// Discriminated union for the mixed FlatList items (Phase 4)
+// Discriminated union for the mixed FlatList items
 // ---------------------------------------------------------------------------
 type FolderRow = { kind: 'folder'; folder: FolderListingItem }
 type CharacterRow = { kind: 'character'; character: CharacterCardSummary }
 type ListRow = FolderRow | CharacterRow
 
 const CharacterList: React.FC = () => {
+    const { t } = useTranslation()
     const navigationPending = useRef(false)
     const { sortBy, sortDirection, tagFilter, textFilter, currentFolderId, setCurrentFolder } =
         useCharacterSortStore(
@@ -47,7 +51,24 @@ const CharacterList: React.FC = () => {
     const [pages, setPages] = useState(3)
     const [previousLength, setPreviousLength] = useState(0)
 
-    // Character live query — passes folderId for server-side filtering
+    const { selectionMode, selectedIds, exitSelectionMode } = useSelectionStore(
+        useShallow((state) => ({
+            selectionMode: state.selectionMode,
+            selectedIds: state.selectedIds,
+            exitSelectionMode: state.exitSelectionMode,
+        }))
+    )
+
+    const isRoot = currentFolderId === undefined
+
+    // Exit selection mode and reset pagination when switching folders
+    useEffect(() => {
+        exitSelectionMode()
+        setPages(3)
+        setPreviousLength(0)
+    }, [currentFolderId, exitSelectionMode])
+
+    // Character live query — only active inside a folder (including Ungrouped)
     const { data, updatedAt } = useLiveQueryAsync(
         Characters.db.live.cardListWindow({
             type: 'character',
@@ -58,7 +79,7 @@ const CharacterList: React.FC = () => {
             searchText: textFilter,
             includedTags: tagFilter,
             hiddenTags: hiddenTags,
-            folderId: currentFolderId,
+            folderId: isRoot ? null : currentFolderId,
         }),
         {
             key: [
@@ -71,6 +92,7 @@ const CharacterList: React.FC = () => {
                 pages,
                 currentFolderId,
             ],
+            enabled: !isRoot,
             watch: [
                 { table: 'characters' },
                 { table: 'characterLinks' },
@@ -84,36 +106,48 @@ const CharacterList: React.FC = () => {
         }
     )
 
-    // Folder live query — only used at root (no active folder)
+    // Exact live count of ungrouped characters for the root view
+    const { data: ungroupedCountRows } = useLiveQueryAsync(
+        Characters.db.folders.ungroupedCount(),
+        {
+            key: ['ungrouped-count'],
+            enabled: isRoot,
+            watch: [{ table: 'characters' }, { table: 'character_folder_members' }],
+        }
+    )
+    const ungroupedCount = ungroupedCountRows[0]?.count ?? 0
+
+    // Folder live query
     const { data: folderData } = useLiveQueryAsync(Characters.db.folders.liveList(), {
         key: ['folder-list-main'],
         watch: [{ table: 'character_folders' }, { table: 'character_folder_members' }],
     })
 
     const characterList: CharacterCardSummary[] = useMemo(() => {
+        if (isRoot) return []
         return data.map((item) => ({
             ...item,
             latestChatId: item.chats[0]?.id,
             latestSwipeText: item.chats[0]?.messages[0]?.swipes[0]?.swipe,
             latestMessageName: item.chats[0]?.messages[0]?.name,
             last_modified: item.last_modified ?? 0,
-            tags: item.tags.map((item) => item.tag.tag),
+            tags: item.tags.map((tagItem) => tagItem.tag.tag),
             folderId: item.folder_membership?.folder_id ?? null,
         }))
-    }, [data])
+    }, [data, isRoot])
 
-    // Phase 4: build the mixed list
-    // At the root view (no folder selected), prepend folder rows above character rows.
-    // Inside a folder, show only character rows (filtering is already done by cardListWindow).
+    // Build the list: root shows ONLY folders + Ungrouped; inside a folder shows ONLY characters
     const listRows: ListRow[] = useMemo(() => {
-        const isRoot = currentFolderId === undefined
         if (!isRoot) {
             return characterList.map((c) => ({ kind: 'character', character: c }))
         }
 
-        // Build folder rows — only show folders that are not hidden by textFilter
         const folderRows: FolderRow[] = folderData
-            .filter((f) => !textFilter || f.name.toLocaleLowerCase().includes(textFilter.toLocaleLowerCase()))
+            .filter(
+                (f) =>
+                    !textFilter ||
+                    f.name.toLocaleLowerCase().includes(textFilter.toLocaleLowerCase())
+            )
             .map((f) => ({
                 kind: 'folder',
                 folder: {
@@ -123,13 +157,27 @@ const CharacterList: React.FC = () => {
                 },
             }))
 
-        const characterRows: CharacterRow[] = characterList.map((c) => ({
-            kind: 'character',
-            character: c,
-        }))
+        // Virtual "Ungrouped" folder — live unassigned count
+        const ungroupedRow: FolderRow = {
+            kind: 'folder',
+            folder: {
+                id: -1, // sentinel for "Ungrouped"
+                name: t('character.folders.ungrouped', 'Ungrouped'),
+                memberCount: ungroupedCount,
+            },
+        }
 
-        return [...folderRows, ...characterRows]
-    }, [currentFolderId, folderData, characterList, textFilter])
+        const showUngrouped =
+            !textFilter ||
+            ungroupedRow.folder.name.toLocaleLowerCase().includes(textFilter.toLocaleLowerCase())
+
+        return [...folderRows, ...(showUngrouped ? [ungroupedRow] : [])]
+    }, [isRoot, folderData, characterList, ungroupedCount, textFilter, t])
+
+    // All character IDs in the current view (for Select All)
+    const allCharacterIds = useMemo(() => characterList.map((c) => c.id), [characterList])
+
+    const hasSearchFilter = Boolean(textFilter || tagFilter.length > 0)
 
     // do not render when not shown, optimizes some rerenders
     const settingsOpen = Drawer.useDrawerStore((state) => !!state.values[Drawer.ID.SETTINGS])
@@ -153,7 +201,7 @@ const CharacterList: React.FC = () => {
                 )}
             />
 
-            <CharacterListHeader resultLength={characterList.length} />
+            <CharacterListHeader resultLength={isRoot ? listRows.length : characterList.length} />
             <GuideTarget
                 id="main.characters"
                 style={{ flex: 1 }}
@@ -163,6 +211,7 @@ const CharacterList: React.FC = () => {
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ rowGap: 16 }}
                     data={listRows}
+                    extraData={selectedIds}
                     keyExtractor={(item) =>
                         item.kind === 'folder'
                             ? `folder-${item.folder.id}`
@@ -173,7 +222,13 @@ const CharacterList: React.FC = () => {
                             return (
                                 <FolderListing
                                     folder={item.folder}
-                                    onPress={(f) => setCurrentFolder(f.id)}
+                                    onPress={(f) => {
+                                        if (f.id === -1) {
+                                            setCurrentFolder(null)
+                                        } else {
+                                            setCurrentFolder(f.id)
+                                        }
+                                    }}
                                 />
                             )
                         }
@@ -181,11 +236,16 @@ const CharacterList: React.FC = () => {
                             <CharacterListing
                                 character={item.character}
                                 navigationPending={navigationPending}
+                                selectionMode={selectionMode}
+                                selected={
+                                    selectionMode && selectedIds.includes(item.character.id)
+                                }
                             />
                         )
                     }}
                     onEndReachedThreshold={1}
                     onEndReached={() => {
+                        if (isRoot) return
                         if (previousLength === data.length) {
                             return
                         }
@@ -197,13 +257,18 @@ const CharacterList: React.FC = () => {
                     onStartReached={() => {
                         if (pages !== 3) setPages(3)
                     }}
-                    ListEmptyComponent={() => data.length === 0 && updatedAt && <CharactersEmpty />}
+                    ListEmptyComponent={() => {
+                        if (isRoot) {
+                            return hasSearchFilter ? <CharactersSearchEmpty /> : null
+                        }
+                        if (!updatedAt) return null
+                        return hasSearchFilter ? <CharactersSearchEmpty /> : <CharactersEmpty />
+                    }}
                 />
             </GuideTarget>
 
-            {characterList.length === 0 && data.length !== 0 && updatedAt && (
-                <CharactersSearchEmpty />
-            )}
+            {/* Selection bar at bottom */}
+            {selectionMode && <SelectionBar allCharacterIds={allCharacterIds} />}
         </View>
     )
 }

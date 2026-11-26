@@ -30,7 +30,7 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
 
     const handleCreateCharacter = async (text: string) => {
         if (!text) {
-            Logger.errorToast(t('character.list.errors.nameEmpty'))
+            Logger.errorToast(t('character.list.errors.nameEmpty', 'Name Cannot Be Empty!'))
             return
         }
         if (navigationPending.current) return
@@ -46,63 +46,63 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
 
     const handleCreateFolder = async (name: string) => {
         if (!name.trim()) {
-            Logger.errorToast(t('character.folders.errors.nameEmpty'))
+            Logger.errorToast(t('character.folders.errors.nameEmpty', 'Folder name cannot be empty'))
             return
         }
         await Characters.db.folders.create(name.trim())
-        Logger.info(t('character.folders.created', { name: name.trim() }))
+        Logger.info(t('character.folders.created', { name: name.trim(), defaultValue: 'Created folder: {{name}}' }))
     }
 
     return (
         <>
             <InputSheet
                 ref={inputRef}
-                title={t('character.list.actions.createNewCharacter')}
+                title={t('character.list.actions.createNewCharacter', 'Create New Character')}
                 onConfirm={handleCreateCharacter}
                 verifyText={(text) =>
-                    text.length === 0 ? t('character.list.errors.nameCannotBeEmpty') : ''
+                    text.length === 0 ? t('character.list.errors.nameCannotBeEmpty', 'Name cannot be empty') : ''
                 }
                 placeholder="Name..."
                 autoFocus
-                confirmLabel={t('common.actions.create')}
+                confirmLabel={t('common.actions.create', 'Create')}
             />
 
             <InputSheet
                 ref={newFolderRef}
-                title={t('character.folders.actions.createFolder')}
+                title={t('character.folders.actions.createFolder', 'Create Folder')}
                 onConfirm={handleCreateFolder}
                 verifyText={(text) =>
-                    text.trim().length === 0 ? t('character.folders.errors.nameEmpty') : ''
+                    text.trim().length === 0 ? t('character.folders.errors.nameEmpty', 'Folder name cannot be empty') : ''
                 }
-                placeholder={t('character.folders.namePlaceholder')}
+                placeholder={t('character.folders.namePlaceholder', 'Folder name…')}
                 autoFocus
-                confirmLabel={t('common.actions.create')}
+                confirmLabel={t('common.actions.create', 'Create')}
             />
 
             <ContextMenu placement="bottom">
                 <ContextMenu.Trigger icon="user-add" />
                 <ContextMenu.Body>
                     <ContextMenu.Button
-                        label={t('character.list.actions.importFromFile')}
+                        label={t('character.list.actions.importFromFile', 'Import From File')}
                         disabled={isImporting}
                         onPress={async () => {
                             try {
                                 await Characters.actions.importCards()
                             } catch (error) {
-                                Logger.errorToast(t('character.editor.errors.createFailed'), error)
+                                Logger.errorToast(t('character.editor.errors.createFailed', 'Failed to create character'), error)
                             }
                         }}
                         icon="upload"
                     />
                     <ContextMenu.Button
-                        label={t('character.list.actions.createCharacter')}
+                        label={t('character.list.actions.createCharacter', 'Create Character')}
                         onPress={() => {
                             inputRef.current?.open()
                         }}
                         icon="edit"
                     />
                     <ContextMenu.Button
-                        label={t('character.folders.actions.createFolder')}
+                        label={t('character.folders.actions.createFolder', 'Create Folder')}
                         onPress={() => {
                             newFolderRef.current?.open()
                         }}

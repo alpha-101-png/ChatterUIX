@@ -1,3 +1,4 @@
+import AntDesign from '@react-native-vector-icons/ant-design/static'
 import { count, eq, notInArray } from 'drizzle-orm'
 import { useFocusEffect } from 'expo-router'
 import { useCallback } from 'react'
@@ -6,7 +7,6 @@ import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useMMKVBoolean } from 'react-native-mmkv'
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated'
 import { useShallow } from 'zustand/react/shallow'
-import AntDesign from '@react-native-vector-icons/ant-design/static'
 
 import IconButton from '@components/buttons/IconButton'
 import ListEditorSheet from '@components/input/ListEditorSheet'
@@ -17,6 +17,7 @@ import { characterTags, tags } from '@db/schema'
 import { AppSettings } from '@lib/constants/appSettings'
 import { useLiveQueryAsync } from '@lib/hooks/liveQuery'
 import { Characters } from '@lib/state/characters'
+import { useSelectionStore } from '@lib/state/characters/selectionStore'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { Logger } from '@lib/state/Logger'
 import { TagHider } from '@lib/state/TagHider'
@@ -57,10 +58,18 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
         }))
     )
 
+    const { selectionMode, enterSelectionMode, exitSelectionMode } = useSelectionStore(
+        useShallow((state) => ({
+            selectionMode: state.selectionMode,
+            enterSelectionMode: state.enterSelectionMode,
+            exitSelectionMode: state.exitSelectionMode,
+        }))
+    )
+
     const [showTags, setShowTags] = useMMKVBoolean(AppSettings.ShowTags)
     const hiddenTags = TagHider.useHiddenTags()
 
-    // Live folder name when inside a folder
+    // Live folder name when inside a numbered folder
     const { data: folderData } = useLiveQueryAsync(Characters.db.folders.liveList(), {
         key: ['folder-list-header'],
         watch: [{ table: 'character_folders' }],
@@ -69,6 +78,15 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
         typeof currentFolderId === 'number'
             ? (folderData.find((f) => f.id === currentFolderId) ?? null)
             : null
+
+    // Determine breadcrumb label for the current view
+    const isRoot = currentFolderId === undefined
+    const isUngrouped = currentFolderId === null
+    const isInsideFolder = currentFolderId !== undefined
+
+    const currentFolderLabel = isUngrouped
+        ? t('character.folders.ungrouped', 'Ungrouped')
+        : (currentFolder?.name ?? '')
 
     const { data } = useLiveQueryAsync(
         db
@@ -98,8 +116,6 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
         }, [setShowSearch, setTextFilter, showSearch])
     )
 
-    if (resultLength === 0 && !showSearch && currentFolderId === undefined) return
-
     return (
         <>
             {/* Folder breadcrumb bar */}
@@ -113,16 +129,13 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                     paddingBottom: 8,
                     columnGap: 8,
                 }}>
-                {/* "All" pill — always shown */}
+                {/* "Folders" pill — always shown, tapping resets to root */}
                 <Pressable
                     onPress={() => setCurrentFolder(undefined)}
                     style={({ pressed }) => [
                         styles.pill,
                         {
-                            backgroundColor:
-                                currentFolderId === undefined
-                                    ? color.primary._500
-                                    : color.neutral._200,
+                            backgroundColor: isRoot ? color.primary._500 : color.neutral._200,
                             opacity: pressed ? 0.7 : 1,
                         },
                     ]}>
@@ -130,31 +143,41 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                         style={[
                             styles.pillText,
                             {
-                                color:
-                                    currentFolderId === undefined ? color.text._100 : color.text._400,
+                                color: isRoot ? color.text._100 : color.text._400,
                             },
                         ]}>
-                        {t('character.folders.allCharacters')}
+                        {t('character.folders.folders', 'Folders')}
                     </Text>
                 </Pressable>
 
-                {/* Current folder crumb */}
-                {currentFolder && (
+                {/* Current folder / Ungrouped crumb */}
+                {isInsideFolder && currentFolderLabel !== '' && (
                     <Animated.View
                         entering={FadeIn.duration(150)}
                         exiting={FadeOut.duration(100)}
                         style={{ flexDirection: 'row', alignItems: 'center', columnGap: 6 }}>
                         <AntDesign name="right" size={12} color={color.text._500} />
-                        <View
-                            style={[styles.pill, { backgroundColor: color.primary._500 }]}>
+                        <View style={[styles.pill, { backgroundColor: color.primary._500 }]}>
                             <Text style={[styles.pillText, { color: color.text._100 }]}>
-                                {currentFolder.name}
+                                {currentFolderLabel}
                             </Text>
                         </View>
                     </Animated.View>
                 )}
 
                 <View style={{ flex: 1 }} />
+
+                {/* Multi-select toggle — inside any folder (including Ungrouped) */}
+                {isInsideFolder && (
+                    <IconButton
+                        iconName={{ family: 'antdesign', name: 'check-square' }}
+                        variant="tertiary"
+                        onPress={() => (selectionMode ? exitSelectionMode() : enterSelectionMode())}
+                        iconStyle={{
+                            color: selectionMode ? color.primary._500 : color.text._500,
+                        }}
+                    />
+                )}
 
                 {/* Manage folders button */}
                 <IconButton
@@ -184,10 +207,13 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                             color: color.text._400,
                             fontSize: 16,
                         }}>
-                        {t('character.list.sort.label')}
+                        {t('character.list.sort.label', 'Sort By')}
                     </Text>
-                    <SortButton sortBy="modified" label={t('character.list.sort.recent')} />
-                    <SortButton sortBy="name" label={t('character.list.columns.name')} />
+                    <SortButton
+                        sortBy="modified"
+                        label={t('character.list.sort.recent', 'Recent')}
+                    />
+                    <SortButton sortBy="name" label={t('character.list.columns.name', 'Name')} />
                 </View>
                 <View
                     style={{
@@ -243,7 +269,7 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                                 suggestions={[...data]
                                     .sort((a, b) => b.tagCount - a.tagCount)
                                     .map((item) => item.tag)}
-                                title={t('character.list.search.byTags')}
+                                title={t('character.list.search.byTags', 'Search By Tags')}
                                 value={tagFilter}
                                 onChangeValue={setTagFilter}
                                 keyExtractor={(item) => item}
@@ -253,7 +279,7 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                             />
                         )}
                         <ThemedTextInput
-                            label={t('character.list.search.byName')}
+                            label={t('character.list.search.byName', 'Search By Name')}
                             value={textFilter}
                             onChangeText={setTextFilter}
                             style={{
@@ -267,7 +293,7 @@ const CharacterListHeader: React.FC<CharacterListHeaderProps> = ({ resultLength 
                                     marginTop: 8,
                                     color: color.text._400,
                                 }}>
-                                {t('common.labels.results')}: {resultLength}
+                                {t('common.labels.results', 'Results')}: {resultLength}
                             </Text>
                         )}
                     </Animated.View>

@@ -1,3 +1,4 @@
+import AntDesign from '@react-native-vector-icons/ant-design/static'
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { StyleSheet, Text, View } from 'react-native'
@@ -17,9 +18,16 @@ import CharacterListingTags from './CharacterListingTags'
 type CharacterListingProps = {
     character: CharacterCardSummary
     navigationPending: RefObject<boolean>
+    selectionMode?: boolean
+    selected?: boolean
 }
 
-const CharacterListing: React.FC<CharacterListingProps> = ({ character, navigationPending }) => {
+const CharacterListing: React.FC<CharacterListingProps> = ({
+    character,
+    navigationPending,
+    selectionMode,
+    selected,
+}) => {
     const { t } = useTranslation()
     const [showTags] = useMMKVBoolean(AppSettings.ShowTags)
     const { setShowSearch, setTagFilter, tagFilter } = useCharacterSortStore(
@@ -30,6 +38,7 @@ const CharacterListing: React.FC<CharacterListingProps> = ({ character, navigati
         }))
     )
     const styles = useStyles()
+    const { color } = Theme.useTheme()
 
     const getPreviewText = () => {
         if (character.latestSwipeText === undefined || !character.latestMessageName)
@@ -40,7 +49,22 @@ const CharacterListing: React.FC<CharacterListingProps> = ({ character, navigati
     return (
         <View>
             <CharacterActionsMenu character={character} navigationPending={navigationPending}>
-                <View style={styles.longButtonContainer}>
+                <View
+                    style={[
+                        styles.longButtonContainer,
+                        selected && { borderColor: color.primary._500 },
+                    ]}>
+                    {/* Selection checkbox */}
+                    {selectionMode && (
+                        <View style={styles.checkboxContainer}>
+                            <AntDesign
+                                name={selected ? 'check-square' : 'border'}
+                                size={22}
+                                color={selected ? color.primary._500 : color.text._500}
+                            />
+                        </View>
+                    )}
+
                     <Avatar
                         targetImage={Characters.getCardImageUri(character.image_id)}
                         style={styles.avatar}
@@ -84,6 +108,8 @@ const useStyles = () => {
             flexDirection: 'row',
             backgroundColor: color.neutral._100,
             borderRadius: borderRadius.m,
+            borderWidth: 2,
+            borderColor: 'transparent',
             flex: 1,
             paddingVertical: spacing.l,
             paddingHorizontal: spacing.xl,
@@ -113,6 +139,12 @@ const useStyles = () => {
         previewText: {
             marginTop: spacing.s,
             color: color.text._500,
+        },
+
+        checkboxContainer: {
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginRight: 8,
         },
     })
 }

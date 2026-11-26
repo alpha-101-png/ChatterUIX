@@ -44,25 +44,25 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
     const handleConfirmRename = async (name: string) => {
         if (!editingFolder) return
         await Characters.db.folders.rename(editingFolder.id, name.trim())
-        Logger.info(t('character.folders.manager.renamed', { name: name.trim() }))
+        Logger.info(t('character.folders.manager.renamed', { name: name.trim(), defaultValue: 'Renamed folder to {{name}}' }))
     }
 
     const handleDelete = (folder: { id: number; name: string; members: { character_id: number }[] }) => {
         Alert.alert({
-            title: t('character.folders.manager.deleteTitle'),
-            description: t('character.folders.manager.deleteDescription', { name: folder.name }),
+            title: t('character.folders.manager.deleteTitle', 'Delete Folder'),
+            description: t('character.folders.manager.deleteDescription', { name: folder.name, defaultValue: "Are you sure you want to delete the folder '{{name}}'? Characters inside will become ungrouped." }),
             buttons: [
-                { label: t('common.actions.cancel') },
+                { label: t('common.actions.cancel', 'Cancel') },
                 {
-                    label: t('common.actions.delete'),
+                    label: t('common.actions.delete', 'Delete'),
                     type: 'warning',
                     onPress: async () => {
-                        // If the user is currently viewing this folder, reset to "All"
+                        // If the user is currently viewing this folder, reset to root
                         if (currentFolderId === folder.id) {
                             setCurrentFolder(undefined)
                         }
                         await Characters.db.folders.remove(folder.id)
-                        Logger.info(t('character.folders.manager.deleted', { name: folder.name }))
+                        Logger.info(t('character.folders.manager.deleted', { name: folder.name, defaultValue: 'Deleted folder: {{name}}' }))
                     },
                 },
             ],
@@ -73,7 +73,7 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
         <>
             <BottomSheet ref={ref} sheetStyle={{ maxHeight: '85%' }}>
                 <BottomSheetHeader
-                    title={t('character.folders.manager.title')}
+                    title={t('character.folders.manager.title', 'Manage Folders')}
                     style={{ paddingHorizontal: 16, paddingVertical: 16 }}
                 />
                 <EdgeFadeFlatList
@@ -88,7 +88,7 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
                     }}
                     ListEmptyComponent={
                         <View style={{ paddingVertical: 16 }}>
-                            <TText color="400">{t('character.folders.empty')}</TText>
+                            <TText color="400">{t('character.folders.empty', 'No folders yet')}</TText>
                         </View>
                     }
                     renderItem={({ item }) => (
@@ -106,6 +106,7 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
                             <TText color="500" size={12}>
                                 {t('character.folders.manager.memberCount', {
                                     count: item.members.length,
+                                    defaultValue: '{{count}} characters',
                                 })}
                             </TText>
                         </ListButton>
@@ -114,7 +115,7 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
                 <BottomSheetControls>
                     <BottomSheetButton
                         variant="secondary"
-                        label={t('common.actions.close')}
+                        label={t('common.actions.close', 'Close')}
                         onPress={() => ref.current?.close()}
                     />
                 </BottomSheetControls>
@@ -123,14 +124,14 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
             {/* Rename input sheet — rendered outside the manager sheet so it stacks on top */}
             <InputSheet
                 ref={renameRef}
-                title={t('character.folders.manager.renameTitle')}
-                placeholder={t('character.folders.manager.renamePlaceholder')}
+                title={t('character.folders.manager.renameTitle', 'Rename Folder')}
+                placeholder={t('character.folders.manager.renamePlaceholder', 'New folder name…')}
                 defaultValue={editingFolder?.name ?? ''}
                 inputKey={editingFolder?.id}
                 rememberInput
-                confirmLabel={t('common.actions.save')}
+                confirmLabel={t('common.actions.save', 'Save')}
                 verifyText={(text) =>
-                    text.trim().length === 0 ? t('character.folders.errors.nameEmpty') : ''
+                    text.trim().length === 0 ? t('character.folders.errors.nameEmpty', 'Folder name cannot be empty') : ''
                 }
                 onConfirm={handleConfirmRename}
                 bodyContainerStyle={{ paddingTop: 16 }}

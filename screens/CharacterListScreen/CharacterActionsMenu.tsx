@@ -8,6 +8,7 @@ import ContextMenu from '@components/views/ContextMenu'
 import { useBottomSheetRef } from '@components/views/BottomSheet'
 import { useConnectionStore } from '@lib/engine/API/connectionStore'
 import { CharacterCardSummary, Characters } from '@lib/state/characters'
+import { useSelectionStore } from '@lib/state/characters/selectionStore'
 import { Chats } from '@lib/state/chat'
 import { Instructs } from '@lib/state/Instructs'
 import { Logger } from '@lib/state/Logger'
@@ -30,6 +31,10 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
     const path = usePathname()
     const router = useRouter()
     const folderPickerRef = useBottomSheetRef()
+
+    const selectionMode = useSelectionStore((state) => state.selectionMode)
+    const toggleSelection = useSelectionStore((state) => state.toggleSelection)
+    const enterSelectionMode = useSelectionStore((state) => state.enterSelectionMode)
 
     const { setId } = Chats.useChat()
     const selectUserCard = Characters.useUserStore((state) => state.setCard)
@@ -136,33 +141,52 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
         folderPickerRef.current?.open()
     }
 
+    const handleSelect = (close: () => void) => {
+        close()
+        enterSelectionMode(character.id)
+    }
+
+    const handleTap = () => {
+        if (selectionMode) {
+            toggleSelection(character.id)
+        } else {
+            handleOpenChat()
+        }
+    }
+
     return (
         <>
-            <ContextMenu disabled={path !== '/'} placement="center">
-                <ContextMenu.Trigger onPress={handleOpenChat} longPress delayLongPress={300}>
+            <ContextMenu disabled={path !== '/' || selectionMode} placement="center">
+                <ContextMenu.Trigger onPress={handleTap} longPress delayLongPress={300}>
                     <View pointerEvents="none">{children}</View>
                 </ContextMenu.Trigger>
                 <ContextMenu.Body>
                     <ContextMenu.Button
-                        label={t('common.actions.edit')}
+                        label={t('common.actions.edit', 'Edit')}
                         icon="edit"
                         closeOnPress={false}
                         onPress={handleEditCard}
                     />
                     <ContextMenu.Button
-                        label={t('common.actions.clone')}
+                        label={t('common.actions.clone', 'Clone')}
                         icon="copy"
                         closeOnPress={false}
                         onPress={handleDuplicateCard}
                     />
                     <ContextMenu.Button
-                        label={t('character.folders.actions.moveToFolder')}
+                        label={t('character.folders.actions.moveToFolder', 'Move to Folder')}
                         icon="folder"
                         closeOnPress={false}
                         onPress={handleMoveToFolder}
                     />
                     <ContextMenu.Button
-                        label={t('common.actions.delete')}
+                        label={t('character.folders.actions.select', 'Select')}
+                        icon="check"
+                        closeOnPress={false}
+                        onPress={handleSelect}
+                    />
+                    <ContextMenu.Button
+                        label={t('common.actions.delete', 'Delete')}
                         icon="delete"
                         closeOnPress={false}
                         onPress={handleDeleteCard}

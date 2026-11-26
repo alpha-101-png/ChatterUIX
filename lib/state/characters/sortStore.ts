@@ -20,9 +20,9 @@ type CharacterSortStore = {
     setTagFilter: (filter: string[]) => void
     /**
      * Active folder filter:
-     * - `undefined` → show all characters (no folder filter)
+     * - `undefined` → root Folders view (shows custom folders + Ungrouped)
      * - `number`    → show only characters in this folder
-     * - `null`      → show only characters with no folder
+     * - `null`      → show only Ungrouped characters (no custom folder)
      */
     currentFolderId: number | null | undefined
     setCurrentFolder: (folderId: number | null | undefined) => void
