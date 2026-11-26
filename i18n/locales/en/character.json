@@ -56,6 +56,8 @@
     "character.list.actions.createCharacter": "Create Character",
     "character.list.actions.createNewCharacter": "Create New Character",
     "character.list.actions.importFromFile": "Import From File",
+    "character.list.actions.pin": "Pin",
+    "character.list.actions.unpin": "Unpin",
     "character.list.columns.name": "Name",
     "character.list.emptyStates.noCharactersFound": "No Characters Found. Try Importing Some!",
     "character.list.emptyStates.noCharactersMatch": "No Characters Match Search Result",

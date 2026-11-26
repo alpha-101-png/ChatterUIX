@@ -13,6 +13,7 @@ export type CharacterCardSummary = {
     id: number
     image_id: number
     last_modified: number
+    isPinned: boolean
     tags: string[]
     links: CharacterCard['links']
     folderId?: number | null

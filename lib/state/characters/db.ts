@@ -43,6 +43,7 @@ namespace query {
                 name: true,
                 image_id: true,
                 last_modified: true,
+                isPinned: true,
             },
             with: {
                 tags: {
@@ -81,7 +82,10 @@ namespace query {
                 },
             },
             where: (characters, { eq }) => eq(characters.type, type),
-            orderBy: sortBy === 'id' ? characters.id : desc(characters.last_modified),
+            orderBy: [
+                desc(characters.isPinned),
+                sortBy === 'id' ? characters.id : desc(characters.last_modified),
+            ],
         })
 
         return query.map((item) => ({
@@ -130,6 +134,7 @@ namespace live {
                 name: true,
                 image_id: true,
                 last_modified: true,
+                isPinned: true,
             },
             with: {
                 tags: {
@@ -168,7 +173,10 @@ namespace live {
                 },
             },
             where: (characters, { eq }) => eq(characters.type, type),
-            orderBy: sortBy === 'id' ? characters.id : desc(characters.last_modified),
+            orderBy: [
+                desc(characters.isPinned),
+                sortBy === 'id' ? characters.id : desc(characters.last_modified),
+            ],
         })
     }
 
@@ -190,6 +198,7 @@ namespace live {
                 name: true,
                 image_id: true,
                 last_modified: true,
+                isPinned: true,
             },
             where: (characters) => {
                 const base = eq(characters.type, type)
@@ -300,7 +309,10 @@ namespace live {
                     },
                 },
             },
-            orderBy: sortBy === 'name' ? sort(characters.name) : sort(characters.last_modified),
+            orderBy: [
+                desc(characters.isPinned),
+                sortBy === 'name' ? sort(characters.name) : sort(characters.last_modified),
+            ],
             limit: limit,
             offset: offset,
         })
@@ -320,6 +332,7 @@ namespace live {
                 name: true,
                 image_id: true,
                 last_modified: true,
+                isPinned: true,
             },
             where: (characters, { eq }) => eq(characters.type, type),
             orderBy: characters.id,
@@ -499,6 +512,17 @@ namespace update {
         await database.update(characters).set(changes).where(eq(characters.id, characterId))
     }
 
+    export const setPinned = async (characterId: number, isPinned: boolean) => {
+        const existing = await query.cardRow(characterId)
+        await database
+            .update(characters)
+            .set({
+                isPinned,
+                ...(existing && { last_modified: existing.last_modified }),
+            })
+            .where(eq(characters.id, characterId))
+    }
+
     export const cardTimestamp = async (characterId: number) => {
         await database
             .update(characters)
@@ -597,9 +621,14 @@ namespace folders {
             .where(eq(characterFolders.id, folderId))
     }
 
-    /** Delete a folder. Members' rows are cascade-deleted; characters are unaffected. */
+    /** Delete a folder and its membership rows so characters return to Ungrouped unaffected. */
     export const remove = async (folderId: number) => {
-        await database.delete(characterFolders).where(eq(characterFolders.id, folderId))
+        await database.transaction(async (tx) => {
+            await tx
+                .delete(characterFolderMembers)
+                .where(eq(characterFolderMembers.folder_id, folderId))
+            await tx.delete(characterFolders).where(eq(characterFolders.id, folderId))
+        })
     }
 
     /**

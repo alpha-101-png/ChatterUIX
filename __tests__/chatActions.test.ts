@@ -335,6 +335,7 @@ test('initial greetings use the target card name and leave temporal macros untou
         type: 'character',
         image_id: 1,
         background_image: null,
+        isPinned: false,
         last_modified: 0,
         tags: [],
         links: [],

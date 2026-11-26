@@ -1,7 +1,7 @@
 import { usePathname, useRouter } from 'expo-router'
 import { type ReactNode, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import { View } from 'react-native'
+import { Pressable, View } from 'react-native'
 
 import Alert from '@components/views/Alert'
 import ContextMenu from '@components/views/ContextMenu'
@@ -146,18 +146,27 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
         enterSelectionMode(character.id)
     }
 
-    const handleTap = () => {
-        if (selectionMode) {
-            toggleSelection(character.id)
-        } else {
-            handleOpenChat()
-        }
+    const handleTogglePin = async (close: () => void) => {
+        close()
+        await Characters.db.update.setPinned(character.id, !character.isPinned)
+    }
+
+    if (selectionMode) {
+        return (
+            <Pressable
+                accessibilityRole="button"
+                disabled={path !== '/'}
+                onPress={() => toggleSelection(character.id)}
+                style={({ pressed }) => pressed && { opacity: 0.7 }}>
+                <View pointerEvents="none">{children}</View>
+            </Pressable>
+        )
     }
 
     return (
         <>
-            <ContextMenu disabled={path !== '/' || selectionMode} placement="center">
-                <ContextMenu.Trigger onPress={handleTap} longPress delayLongPress={300}>
+            <ContextMenu disabled={path !== '/'} placement="center">
+                <ContextMenu.Trigger onPress={handleOpenChat} longPress delayLongPress={300}>
                     <View pointerEvents="none">{children}</View>
                 </ContextMenu.Trigger>
                 <ContextMenu.Body>
@@ -172,6 +181,16 @@ const CharacterActionsMenu: React.FC<CharacterActionsMenuProps> = ({
                         icon="copy"
                         closeOnPress={false}
                         onPress={handleDuplicateCard}
+                    />
+                    <ContextMenu.Button
+                        label={
+                            character.isPinned
+                                ? t('character.list.actions.unpin', 'Unpin')
+                                : t('character.list.actions.pin', 'Pin')
+                        }
+                        icon="pushpin"
+                        closeOnPress={false}
+                        onPress={handleTogglePin}
                     />
                     <ContextMenu.Button
                         label={t('character.folders.actions.moveToFolder', 'Move to Folder')}

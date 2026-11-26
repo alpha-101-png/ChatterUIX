@@ -211,6 +211,13 @@
       "when": 1795591091711,
       "tag": "0029_vengeful_wolfpack",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1795684806288,
+      "tag": "0030_peaceful_santa_claus",
+      "breakpoints": true
     }
   ]
 }

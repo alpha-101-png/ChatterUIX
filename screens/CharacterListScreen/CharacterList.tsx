@@ -1,7 +1,7 @@
-import { usePathname } from 'expo-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useFocusEffect, usePathname } from 'expo-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { View } from 'react-native'
+import { BackHandler, View } from 'react-native'
 import Animated, { LinearTransition } from 'react-native-reanimated'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -51,10 +51,9 @@ const CharacterList: React.FC = () => {
     const [pages, setPages] = useState(3)
     const [previousLength, setPreviousLength] = useState(0)
 
-    const { selectionMode, selectedIds, exitSelectionMode } = useSelectionStore(
+    const { selectionMode, exitSelectionMode } = useSelectionStore(
         useShallow((state) => ({
             selectionMode: state.selectionMode,
-            selectedIds: state.selectedIds,
             exitSelectionMode: state.exitSelectionMode,
         }))
     )
@@ -67,6 +66,23 @@ const CharacterList: React.FC = () => {
         setPages(3)
         setPreviousLength(0)
     }, [currentFolderId, exitSelectionMode])
+
+    useFocusEffect(
+        useCallback(() => {
+            const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+                if (useSelectionStore.getState().selectionMode) {
+                    useSelectionStore.getState().exitSelectionMode()
+                    return true
+                }
+                if (useCharacterSortStore.getState().currentFolderId !== undefined) {
+                    useCharacterSortStore.getState().setCurrentFolder(undefined)
+                    return true
+                }
+                return false
+            })
+            return () => handler.remove()
+        }, [])
+    )
 
     // Character live query — only active inside a folder (including Ungrouped)
     const { data, updatedAt } = useLiveQueryAsync(
@@ -211,7 +227,7 @@ const CharacterList: React.FC = () => {
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ rowGap: 16 }}
                     data={listRows}
-                    extraData={selectedIds}
+                    extraData={selectionMode}
                     keyExtractor={(item) =>
                         item.kind === 'folder'
                             ? `folder-${item.folder.id}`
@@ -236,10 +252,6 @@ const CharacterList: React.FC = () => {
                             <CharacterListing
                                 character={item.character}
                                 navigationPending={navigationPending}
-                                selectionMode={selectionMode}
-                                selected={
-                                    selectionMode && selectedIds.includes(item.character.id)
-                                }
                             />
                         )
                     }}

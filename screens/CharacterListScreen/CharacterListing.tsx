@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow'
 import Avatar from '@components/views/Avatar'
 import { AppSettings } from '@lib/constants/appSettings'
 import { Characters, CharacterCardSummary } from '@lib/state/characters'
+import { useSelectionStore } from '@lib/state/characters/selectionStore'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { Theme } from '@lib/theme/ThemeManager'
 import { getFriendlyTimeStamp } from '@lib/utils/Time'
@@ -39,6 +40,10 @@ const CharacterListing: React.FC<CharacterListingProps> = ({
     )
     const styles = useStyles()
     const { color } = Theme.useTheme()
+    const storeSelectionMode = useSelectionStore((state) => state.selectionMode)
+    const storeSelected = useSelectionStore((state) => state.selectedIds.includes(character.id))
+    const isSelectionMode = selectionMode ?? storeSelectionMode
+    const isSelected = isSelectionMode && (selected ?? storeSelected)
 
     const getPreviewText = () => {
         if (character.latestSwipeText === undefined || !character.latestMessageName)
@@ -52,15 +57,15 @@ const CharacterListing: React.FC<CharacterListingProps> = ({
                 <View
                     style={[
                         styles.longButtonContainer,
-                        selected && { borderColor: color.primary._500 },
+                        isSelected && { borderColor: color.primary._500 },
                     ]}>
                     {/* Selection checkbox */}
-                    {selectionMode && (
+                    {isSelectionMode && (
                         <View style={styles.checkboxContainer}>
                             <AntDesign
-                                name={selected ? 'check-square' : 'border'}
+                                name={isSelected ? 'check-square' : 'border'}
                                 size={22}
-                                color={selected ? color.primary._500 : color.text._500}
+                                color={isSelected ? color.primary._500 : color.text._500}
                             />
                         </View>
                     )}
@@ -71,10 +76,19 @@ const CharacterListing: React.FC<CharacterListingProps> = ({
                     />
 
                     <View style={{ flex: 1, paddingLeft: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                            <Text style={styles.nametag} numberOfLines={2}>
-                                {character.name}
-                            </Text>
+                        <View style={styles.headerRow}>
+                            <View style={styles.nameRow}>
+                                <Text style={styles.nametag} numberOfLines={2}>
+                                    {character.name}
+                                </Text>
+                                {character.isPinned && (
+                                    <AntDesign
+                                        name="pushpin"
+                                        size={13}
+                                        color={color.primary._500}
+                                    />
+                                )}
+                            </View>
                             <Text style={styles.timestamp}>
                                 {getFriendlyTimeStamp(character.last_modified)}
                             </Text>
@@ -124,8 +138,22 @@ const useStyles = () => {
             borderWidth: 1,
         },
 
-        nametag: {
+        headerRow: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            columnGap: 8,
+        },
+
+        nameRow: {
             flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            columnGap: 6,
+        },
+
+        nametag: {
+            flexShrink: 1,
             fontSize: fontSize.l,
             fontWeight: '500',
             color: color.text._100,

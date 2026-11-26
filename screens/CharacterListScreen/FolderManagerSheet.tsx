@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { View } from 'react-native'
 import { useShallow } from 'zustand/react/shallow'
 
+import IconButton from '@components/buttons/IconButton'
 import ListButton from '@components/buttons/ListButton'
 import TText from '@components/text/TText'
 import Alert from '@components/views/Alert'
@@ -92,24 +93,44 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
                         </View>
                     }
                     renderItem={({ item }) => (
-                        <ListButton
+                        <View
                             style={{
-                                paddingHorizontal: 16,
-                                paddingVertical: 14,
-                                minHeight: 48,
                                 flexDirection: 'row',
-                                justifyContent: 'space-between',
                                 alignItems: 'center',
-                            }}
-                            onPress={() => handleRename(item)}>
-                            <TText style={{ flex: 1 }}>{item.name}</TText>
-                            <TText color="500" size={12}>
-                                {t('character.folders.manager.memberCount', {
-                                    count: item.members.length,
-                                    defaultValue: '{{count}} characters',
-                                })}
-                            </TText>
-                        </ListButton>
+                                columnGap: 8,
+                            }}>
+                            <ListButton
+                                style={{
+                                    flex: 1,
+                                    paddingHorizontal: 16,
+                                    paddingVertical: 14,
+                                    minHeight: 48,
+                                    flexDirection: 'row',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    columnGap: 8,
+                                }}
+                                onPress={() => handleRename(item)}>
+                                <TText style={{ flex: 1 }}>{item.name}</TText>
+                                <TText color="500" size={12}>
+                                    {t('character.folders.manager.memberCount', {
+                                        count: item.members.length,
+                                        defaultValue: '{{count}} characters',
+                                    })}
+                                </TText>
+                            </ListButton>
+                            <IconButton
+                                iconName="delete"
+                                variant="tertiary"
+                                level="error"
+                                iconSize={20}
+                                accessibilityLabel={t(
+                                    'character.folders.manager.deleteTitle',
+                                    'Delete Folder'
+                                )}
+                                onPress={() => handleDelete(item)}
+                            />
+                        </View>
                     )}
                 />
                 <BottomSheetControls>

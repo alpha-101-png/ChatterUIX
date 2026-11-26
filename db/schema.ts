@@ -60,6 +60,7 @@ export const characters = sqliteTable('characters', {
         .$onUpdateFn(() => Date.now()),
     // addition 15/8/2025
     background_image: integer('background_image', { mode: 'number' }),
+    isPinned: integer('is_pinned', { mode: 'boolean' }).default(false).notNull(),
 })
 
 export const characterGreetings = sqliteTable('character_greetings', {
