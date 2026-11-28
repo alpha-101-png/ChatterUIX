@@ -1,18 +1,28 @@
+import Constants from 'expo-constants'
 import { t } from 'i18next'
 import BackgroundService, { type BackgroundTaskOptions } from 'react-native-background-actions'
 
 import { Logger } from '@lib/state/Logger'
 
-const getOptions = (): BackgroundTaskOptions => ({
-    taskName: 'chatterui_background_tasks',
-    foregroundServiceType: ['dataSync'],
-    taskTitle: t('background.title'),
-    taskDesc: t('background.description'),
-    taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-    color: '#403737',
-    linkingURI: 'chatterui://',
-    progressBar: { max: 1, value: 0, indeterminate: true },
-})
+const getLinkingScheme = () => {
+    const scheme = Constants.expoConfig?.scheme
+    if (Array.isArray(scheme)) return scheme[0] ?? 'comalphafrontend'
+    return scheme ?? 'comalphafrontend'
+}
+
+const getOptions = (): BackgroundTaskOptions => {
+    const scheme = getLinkingScheme()
+    return {
+        taskName: 'chatterui_background_tasks',
+        foregroundServiceType: ['dataSync'],
+        taskTitle: t('background.title'),
+        taskDesc: t('background.description'),
+        taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+        color: '#403737',
+        linkingURI: `${scheme}://`,
+        progressBar: { max: 1, value: 0, indeterminate: true },
+    }
+}
 
 type Task = { run: () => Promise<void>; resolve: () => void; reject: (error: unknown) => void }
 const tasks = new Set<Promise<void>>()
@@ -69,7 +79,7 @@ export const updateDownloadNotification = (completed: number, total: number, cou
     void BackgroundService.updateNotification({
         taskTitle: count ? t('background.downloading', { count }) : options.taskTitle,
         taskDesc: count ? t('background.downloadHint') : options.taskDesc,
-        linkingURI: count ? 'chatterui://models' : options.linkingURI,
+        linkingURI: count ? `${getLinkingScheme()}://models` : options.linkingURI,
         progressBar:
             count && total > 0
                 ? {

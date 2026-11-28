@@ -4,6 +4,7 @@ import Alert from '../components/views/Alert'
 import { exportCards } from '../lib/state/characters/actions'
 import { useSelectionStore } from '../lib/state/characters/selectionStore'
 import { exportFullBackup, restoreFullBackup } from '../lib/utils/backup'
+import { cleanupOrphanedAvatarsAndVacuum, scanOrphanedAvatars } from '../lib/utils/storageCleanup'
 import DatabaseSettings from '../screens/AppSettingsScreen/DatabaseSettings'
 import SelectionBar from '../screens/CharacterListScreen/SelectionBar'
 
@@ -128,6 +129,17 @@ jest.mock('../lib/utils/backup', () => ({
     restoreFullBackup: jest.fn(async () => {}),
 }))
 
+jest.mock('../lib/utils/storageCleanup', () => ({
+    scanOrphanedAvatars: jest.fn(async () => ({ files: [], totalBytes: 0 })),
+    cleanupOrphanedAvatarsAndVacuum: jest.fn(async () => ({
+        deletedCount: 0,
+        deletedBytes: 0,
+        dbBytesFreed: 0,
+        totalBytesFreed: 0,
+    })),
+    formatStorageSize: jest.fn((bytes: number) => `${bytes} B`),
+}))
+
 const { Characters } = require('../lib/state/characters') as {
     Characters: { actions: { exportCards: jest.Mock } }
 }
@@ -221,6 +233,52 @@ test('DatabaseSettings renders Full Backup and Restore Full Backup options and r
         onBeforeReplaceDb: expect.any(Function),
     })
     expect(reloadAppAsync).toHaveBeenCalledTimes(1)
+
+    act(() => renderer.unmount())
+})
+
+test('DatabaseSettings scans orphaned avatars, confirms cleanup + VACUUM, and shows completion alert', async () => {
+    const mockOrphans = [
+        { filename: '101.png', uri: 'file:///document/characters/101.png', size: 10240 },
+        { filename: '202.png', uri: 'file:///document/characters/202.png', size: 20480 },
+    ]
+    jest.mocked(scanOrphanedAvatars).mockResolvedValueOnce({
+        files: mockOrphans,
+        totalBytes: 30720,
+    })
+    jest.mocked(cleanupOrphanedAvatarsAndVacuum).mockResolvedValueOnce({
+        deletedCount: 2,
+        deletedBytes: 30720,
+        dbBytesFreed: 4096,
+        totalBytesFreed: 34816,
+    })
+
+    let renderer: any
+    act(() => {
+        renderer = create(<DatabaseSettings />)
+    })
+
+    const cleanupBtn = renderer.root
+        .findAllByType('ThemedButton')
+        .find((b: any) => b.props.label === 'Storage Cleanup & Optimize')
+    expect(cleanupBtn).toBeDefined()
+
+    await act(async () => {
+        await cleanupBtn.props.onPress()
+    })
+
+    expect(scanOrphanedAvatars).toHaveBeenCalledTimes(1)
+    const confirmAlert = jest.mocked(Alert.alert).mock.calls[0][0]
+    expect(confirmAlert.title).toBe('Storage Cleanup & Optimize')
+    expect(confirmAlert.buttons).toHaveLength(2)
+
+    await act(async () => {
+        await confirmAlert.buttons[1].onPress?.()
+    })
+
+    expect(cleanupOrphanedAvatarsAndVacuum).toHaveBeenCalledWith(mockOrphans)
+    const doneAlert = jest.mocked(Alert.alert).mock.calls[1][0]
+    expect(doneAlert.title).toBe('Storage Cleanup Complete')
 
     act(() => renderer.unmount())
 })

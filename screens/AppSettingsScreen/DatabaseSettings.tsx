@@ -15,6 +15,11 @@ import { Logger } from '@lib/state/Logger'
 import { Theme } from '@lib/theme/ThemeManager'
 import { exportFullBackup, restoreFullBackup } from '@lib/utils/backup'
 import { copyFile, deleteFile } from '@lib/utils/File'
+import {
+    cleanupOrphanedAvatarsAndVacuum,
+    formatStorageSize,
+    scanOrphanedAvatars,
+} from '@lib/utils/storageCleanup'
 
 const appVersion = appConfig.expo.version
 
@@ -24,7 +29,7 @@ const dbPath = Paths.document.uri + '/SQLite/db.db'
 const DatabaseSettings = () => {
     const { t } = useTranslation()
     const { color, spacing } = Theme.useTheme()
-    const [busyAction, setBusyAction] = useState<'backup' | 'restore' | null>(null)
+    const [busyAction, setBusyAction] = useState<'backup' | 'restore' | 'cleanup' | null>(null)
 
     const exportDB = async (notify: boolean = true) => {
         await localDownload(dbPath.replace('file://', ''))
@@ -102,10 +107,7 @@ const DatabaseSettings = () => {
                         try {
                             await exportFullBackup(appVersion)
                             Logger.infoToast(
-                                t(
-                                    'settings.database.toast.fullBackupOk',
-                                    'Full backup created!'
-                                )
+                                t('settings.database.toast.fullBackupOk', 'Full backup created!')
                             )
                         } catch (error) {
                             Logger.errorToast(
@@ -140,10 +142,7 @@ const DatabaseSettings = () => {
             buttons: [
                 { label: t('common.actions.cancel', 'Cancel') },
                 {
-                    label: t(
-                        'settings.database.alert.restoreFullBackup.confirm',
-                        'Restore Backup'
-                    ),
+                    label: t('settings.database.alert.restoreFullBackup.confirm', 'Restore Backup'),
                     type: 'warning',
                     onPress: async () => {
                         setBusyAction('restore')
@@ -166,6 +165,86 @@ const DatabaseSettings = () => {
                 },
             ],
         })
+    }
+
+    const handleStorageCleanup = async () => {
+        if (busyAction) return
+        setBusyAction('cleanup')
+        try {
+            const scan = await scanOrphanedAvatars()
+            const formattedSize = formatStorageSize(scan.totalBytes)
+            setBusyAction(null)
+            Alert.alert({
+                title: t(
+                    'settings.database.alert.storageCleanup.title',
+                    'Storage Cleanup & Optimize'
+                ),
+                description:
+                    scan.files.length > 0
+                        ? t('settings.database.alert.storageCleanup.description', {
+                              count: scan.files.length,
+                              size: formattedSize,
+                              defaultValue:
+                                  'Found {{count}} orphaned avatar file(s) ({{size}}) from deleted characters.\n\nConfirm to delete these unreferenced image files and run SQLite VACUUM to compact the database.',
+                          })
+                        : t('settings.database.alert.storageCleanup.descriptionEmpty', {
+                              size: formattedSize,
+                              defaultValue:
+                                  'Found 0 orphaned avatar files ({{size}}).\n\nConfirm to run SQLite VACUUM to compact and shrink the database.',
+                          }),
+                buttons: [
+                    { label: t('common.actions.cancel', 'Cancel') },
+                    {
+                        label: t(
+                            'settings.database.alert.storageCleanup.confirm',
+                            'Clean & Optimize'
+                        ),
+                        type: scan.files.length > 0 ? 'warning' : 'default',
+                        onPress: async () => {
+                            setBusyAction('cleanup')
+                            try {
+                                const result = await cleanupOrphanedAvatarsAndVacuum(scan.files)
+                                const freed = formatStorageSize(result.totalBytesFreed)
+                                Alert.alert({
+                                    title: t(
+                                        'settings.database.alert.storageCleanupDone.title',
+                                        'Storage Cleanup Complete'
+                                    ),
+                                    description: t(
+                                        'settings.database.alert.storageCleanupDone.description',
+                                        {
+                                            count: result.deletedCount,
+                                            freed: freed,
+                                            defaultValue:
+                                                'Deleted {{count}} orphaned avatar file(s) and compacted the database.\n\nSpace freed: {{freed}}',
+                                        }
+                                    ),
+                                    buttons: [{ label: t('common.actions.done', 'Done') }],
+                                })
+                            } catch (error) {
+                                Logger.errorToast(
+                                    t('settings.database.toast.storageCleanupFailed', {
+                                        error:
+                                            error instanceof Error ? error.message : String(error),
+                                        defaultValue: 'Failed to clean storage: {{error}}',
+                                    })
+                                )
+                            } finally {
+                                setBusyAction(null)
+                            }
+                        },
+                    },
+                ],
+            })
+        } catch (error) {
+            setBusyAction(null)
+            Logger.errorToast(
+                t('settings.database.toast.storageCleanupScanFailed', {
+                    error: error instanceof Error ? error.message : String(error),
+                    defaultValue: 'Failed to scan storage: {{error}}',
+                })
+            )
+        }
     }
 
     return (
@@ -237,6 +316,15 @@ const DatabaseSettings = () => {
                 }}
             />
 
+            <ThemedButton
+                label={t('settings.database.storageCleanupButton', 'Storage Cleanup & Optimize')}
+                variant="secondary"
+                disabled={busyAction !== null}
+                onPress={() => {
+                    void handleStorageCleanup()
+                }}
+            />
+
             {busyAction !== null && (
                 <View
                     style={{
@@ -249,7 +337,12 @@ const DatabaseSettings = () => {
                     <Text style={{ color: color.text._400 }}>
                         {busyAction === 'backup'
                             ? t('settings.database.fullBackup.working', 'Creating backup…')
-                            : t('settings.database.fullBackup.restoring', 'Restoring backup…')}
+                            : busyAction === 'restore'
+                              ? t('settings.database.fullBackup.restoring', 'Restoring backup…')
+                              : t(
+                                    'settings.database.storageCleanup.working',
+                                    'Scanning & optimizing storage…'
+                                )}
                     </Text>
                 </View>
             )}

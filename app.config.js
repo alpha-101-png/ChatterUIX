@@ -1,34 +1,25 @@
-const IS_DEV = process.env.APP_VARIANT === 'development'
-
 module.exports = {
     expo: {
-        name: IS_DEV ? 'ChatterUI (DEV)' : 'ChatterUI',
+        name: 'FE Alpha',
         newArchEnabled: true,
         slug: 'ChatterUI',
-        version: '0.11.0-beta1',
+        version: '1.0',
         orientation: 'default',
-        icon: './assets/images/icon.png',
-        scheme: 'chatterui',
+        icon: './assets/custom-app-icon.png',
+        scheme: 'comalphafrontend',
         userInterfaceStyle: 'automatic',
         assetBundlePatterns: ['**/*'],
         ios: {
-            icon: {
-                dark: './assets/images/ios-dark.png',
-                light: './assets/images/ios-light.png',
-                tinted: './assets/images/icon.png',
-            },
             supportsTablet: true,
-            package: IS_DEV ? 'com.Vali98.ChatterUIDev' : 'com.Vali98.ChatterUI',
-            bundleIdentifier: IS_DEV ? 'com.Vali98.ChatterUIDev' : 'com.Vali98.ChatterUI',
+            package: 'com.alpha.frontend',
+            bundleIdentifier: 'com.alpha.frontend',
         },
         android: {
             adaptiveIcon: {
-                foregroundImage: './assets/images/adaptive-icon-foreground.png',
-                backgroundImage: './assets/images//adaptive-icon-background.png',
-                monochromeImage: './assets/images/adaptive-icon-foreground.png',
-                backgroundColor: '#000',
+                foregroundImage: './assets/custom-adaptive-icon.png',
+                backgroundColor: '#121218',
             },
-            package: IS_DEV ? 'com.Vali98.ChatterUIDev' : 'com.Vali98.ChatterUI',
+            package: 'com.alpha.frontend',
             userInterfaceStyle: 'dark',
             permissions: [
                 'android.permission.FOREGROUND_SERVICE',
@@ -65,8 +56,12 @@ module.exports = {
             [
                 'expo-splash-screen',
                 {
-                    backgroundColor: '#000000',
-                    image: './assets/images/adaptive-icon.png',
+                    image: './assets/custom-splash-icon.png',
+                    backgroundColor: '#121218',
+                    dark: {
+                        image: './assets/custom-splash-icon.png',
+                        backgroundColor: '#121218',
+                    },
                     imageWidth: 200,
                 },
             ],

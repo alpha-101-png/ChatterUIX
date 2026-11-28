@@ -34,6 +34,10 @@ module.exports = function withCustomIntentFilter(config) {
                         activity['intent-filter'] = []
                     }
 
+                    const scheme = Array.isArray(config.scheme)
+                        ? config.scheme[0]
+                        : config.scheme || 'comalphafrontend'
+
                     activity['intent-filter'].push({
                         $: { 'android:label': 'filter_react_native' },
                         action: [{ $: { 'android:name': 'android.intent.action.VIEW' } }],
@@ -41,7 +45,7 @@ module.exports = function withCustomIntentFilter(config) {
                             { $: { 'android:name': 'android.intent.category.DEFAULT' } },
                             { $: { 'android:name': 'android.intent.category.BROWSABLE' } },
                         ],
-                        data: [{ $: { 'android:scheme': 'chatterui' } }],
+                        data: [{ $: { 'android:scheme': scheme } }],
                     })
 
                     hasModified = true
