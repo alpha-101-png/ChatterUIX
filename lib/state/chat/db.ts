@@ -12,6 +12,7 @@ import {
     notBetween,
     notInArray,
     inArray,
+    or,
     sql,
 } from 'drizzle-orm'
 
@@ -135,8 +136,13 @@ const live = {
 }
 
 const query = {
-    historyCutoff: (chatId: number, throughId: number, excludeIds: number[] = []) =>
-        database
+    historyCutoff: (
+        chatId: number,
+        throughId: number,
+        excludeIds: number[] = [],
+        retainCount = 0
+    ) => {
+        const assistantCutoff = database
             .select({ id: chatEntries.id })
             .from(chatEntries)
             .innerJoin(
@@ -154,7 +160,31 @@ const query = {
             .orderBy(desc(chatEntries.id))
             .limit(1)
             .offset(1)
-            .get()?.id,
+            .get()?.id
+        if (assistantCutoff === undefined) return undefined
+        const count = Math.max(0, Math.floor(retainCount))
+        if (count === 0) return assistantCutoff
+        const retainCutoff = database
+            .select({ id: chatEntries.id })
+            .from(chatEntries)
+            .innerJoin(
+                chatSwipes,
+                and(eq(chatSwipes.entry_id, chatEntries.id), eq(chatSwipes.active, true))
+            )
+            .where(
+                and(
+                    historyWhere(chatId, { throughId }),
+                    or(eq(chatEntries.is_user, true), sql`trim(${chatSwipes.swipe}) != ''`),
+                    excludeIds.length ? notInArray(chatEntries.id, excludeIds) : undefined
+                )
+            )
+            .orderBy(desc(chatEntries.id))
+            .limit(1)
+            .offset(count)
+            .get()?.id
+        if (retainCutoff === undefined) return undefined
+        return Math.min(assistantCutoff, retainCutoff)
+    },
     hasSummarySources: (chatId: number, throughId: number, excludeRanges: HistoryRange[]) =>
         !!database
             .select({ id: chatEntries.id })

@@ -14,7 +14,12 @@ import {
 import { getCurrentSampler } from '@lib/state/samplerStore'
 import { mmkv } from '@lib/storage/MMKV'
 import { summaryList } from '@lib/summaries/db'
-import { summarizeHistory, usableSummariesBefore } from '@lib/summaries/history'
+import {
+    normalizeSummaryRetainCount,
+    summarizeHistory,
+    summaryCutoff,
+    usableSummariesBefore,
+} from '@lib/summaries/history'
 import { useSummarySettingsStore } from '@lib/summaries/settingsStore'
 import { applyMacros, createMacroValues } from '@lib/utils/Macros'
 
@@ -65,6 +70,9 @@ export const captureGenerationInputs = (
     const includeReasoning =
         !rawInstruct.hide_think_tags &&
         (mode === 'local' || template?.request.completionType.type === 'textCompletions')
+    const summaryRetainCount = normalizeSummaryRetainCount(
+        useSummarySettingsStore.getState().summaryRetainCount
+    )
     const chat = Chats.db.query.chatRow(chatId)
     if (!chat) throw new Error('Chat no longer exists')
     const captured =
@@ -73,7 +81,7 @@ export const captureGenerationInputs = (
                   messages: Chats.db.live.chat(chatId, { includeReasoning }).sync()?.messages ?? [],
                   history: undefined as GenerationHistory | undefined,
               }
-            : captureHistory(chatId, includeReasoning)
+            : captureHistory(chatId, includeReasoning, summaryRetainCount)
     const character = Characters.db.live.card(chat.character_id).sync()
     const user = Characters.useUserStore.getState().card
     if (!character || !user) throw new Error('Generation requires a character and user card')
@@ -134,6 +142,7 @@ export const captureGenerationInputs = (
             options.includeSummaries !== false && useSummarySettingsStore.getState().enabled
                 ? summaryList(chatId).all()
                 : [],
+        summaryRetainCount: summaryRetainCount,
         includeReasoning: includeReasoning,
         chatId: chatId,
         mode: mode,
@@ -195,6 +204,9 @@ export const prepareGenerationContext = async (
         inputs.mode === 'local'
             ? !inputs.useModelTemplate
             : inputs.apiConfig?.request.completionType.type === 'textCompletions'
+    const retainCount = normalizeSummaryRetainCount(
+        inputs.summaryRetainCount ?? useSummarySettingsStore.getState().summaryRetainCount
+    )
     const reader =
         options.loadHistory !== false && inputs.history
             ? createHistoryReader({
@@ -203,6 +215,7 @@ export const prepareGenerationContext = async (
                   messages: inputs.messages,
                   includeReasoning: inputs.includeReasoning,
                   summaries: inputs.summaries ?? [],
+                  retainCount: retainCount,
                   estimateOverhead: (hint) =>
                       (hint.id >= 0 && instruct.names ? hint.nameTokens : 0) +
                       (hint.id >= 0 && instruct.timestamp ? 10 : 0) +
@@ -221,8 +234,13 @@ export const prepareGenerationContext = async (
               inputs.messages,
               inputs.summaries ?? [],
               inputs.history
-                  ? generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages)
-                  : undefined
+                  ? generationHistoryCutoff(
+                        inputs.chatId,
+                        inputs.history,
+                        inputs.messages,
+                        retainCount
+                    )
+                  : summaryCutoff(inputs.messages, retainCount)
           )
     const summaryTokens: Record<number, { summarizedMessages: number; rawHistory: number }> =
         reader?.summaryTokens ?? {}
@@ -334,13 +352,21 @@ export const estimateGenerationContext = async (inputs: GenerationInputs) => {
         0
     )
     // Only aggregate old cached lengths; preflight must not materialize old text or media.
+    const retainCount = normalizeSummaryRetainCount(
+        inputs.summaryRetainCount ?? useSummarySettingsStore.getState().summaryRetainCount
+    )
     const older = inputs.history
         ? Chats.db.query.historyStats(inputs.chatId, {
               throughId: inputs.history.throughId,
               beforeId: inputs.messages[0]?.id,
               includeReasoning: inputs.includeReasoning,
               excludeRanges: usableSummariesBefore(
-                  generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages),
+                  generationHistoryCutoff(
+                      inputs.chatId,
+                      inputs.history,
+                      inputs.messages,
+                      retainCount
+                  ),
                   inputs.summaries ?? []
               ),
           })

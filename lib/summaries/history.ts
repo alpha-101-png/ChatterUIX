@@ -1,18 +1,51 @@
 import type { ChatSummary } from '@db/schema'
 import type { ChatMessage } from '@lib/state/chat/types'
 
-// The newest eligible endpoint is the second-latest assistant response, inclusive.
-export const summaryCutoff = (messages: ChatMessage[]) =>
-    messages
-        .filter(
-            (message) =>
-                !message.is_user &&
-                message.swipes.some((swipe) => swipe.active && swipe.swipe.trim())
-        )
-        .at(-2)?.id
+export const DEFAULT_SUMMARY_RETAIN_COUNT = 6
+export const MIN_SUMMARY_RETAIN_COUNT = 0
+export const MAX_SUMMARY_RETAIN_COUNT = 20
 
-export const usableSummaries = (messages: ChatMessage[], summaries: ChatSummary[]) => {
-    return usableSummariesBefore(summaryCutoff(messages), summaries)
+export const normalizeSummaryRetainCount = (value?: number) =>
+    typeof value === 'number' && Number.isFinite(value)
+        ? Math.min(MAX_SUMMARY_RETAIN_COUNT, Math.max(MIN_SUMMARY_RETAIN_COUNT, Math.round(value)))
+        : DEFAULT_SUMMARY_RETAIN_COUNT
+
+const hasVisibleSummaryContent = (message: ChatMessage) =>
+    message.is_user || message.swipes.some((swipe) => swipe.active && swipe.swipe.trim())
+
+export const eligibleSummaryCutoff = (
+    messages: { id: number; is_user: boolean; hasContent: boolean }[],
+    retainCount = 0
+) => {
+    const assistantCutoff = messages
+        .filter((message) => !message.is_user && message.hasContent)
+        .at(-2)?.id
+    if (assistantCutoff === undefined) return undefined
+    const count = Math.max(0, Math.floor(retainCount))
+    if (count === 0) return assistantCutoff
+    const retained = messages.filter((message) => message.is_user || message.hasContent)
+    if (retained.length <= count) return undefined
+    return Math.min(assistantCutoff, retained[retained.length - 1 - count].id)
+}
+
+// The newest eligible endpoint is the second-latest assistant response, inclusive,
+// further bounded so at least `retainCount` newest messages stay unsummarized.
+export const summaryCutoff = (messages: ChatMessage[], retainCount = 0) =>
+    eligibleSummaryCutoff(
+        messages.map((message) => ({
+            id: message.id,
+            is_user: message.is_user,
+            hasContent: message.swipes.some((swipe) => swipe.active && !!swipe.swipe.trim()),
+        })),
+        retainCount
+    )
+
+export const usableSummaries = (
+    messages: ChatMessage[],
+    summaries: ChatSummary[],
+    retainCount = 0
+) => {
+    return usableSummariesBefore(summaryCutoff(messages, retainCount), summaries)
 }
 
 export const usableSummariesBefore = (cutoff: number | undefined, summaries: ChatSummary[]) => {
@@ -98,13 +131,18 @@ export const selectSummarySources = (
     summaries: ChatSummary[],
     replacesId?: number,
     extendRange = false,
-    range?: { startEntryId: number; endEntryId: number }
+    range?: { startEntryId: number; endEntryId: number },
+    retainCount = 0,
+    cutoffOverride?: number | null
 ) => {
-    const cutoff = summaryCutoff(messages)
+    const cutoff =
+        cutoffOverride === undefined
+            ? summaryCutoff(messages, retainCount)
+            : (cutoffOverride ?? undefined)
     if (cutoff === undefined) return []
     const replacement = summaries.find((item) => item.id === replacesId)
-    const used = usableSummaries(
-        messages,
+    const used = usableSummariesBefore(
+        cutoff,
         summaries.filter((item) => item.id !== replacesId && item.id !== replacement?.replaces_id)
     )
     const eligible = messages.filter(
@@ -124,6 +162,20 @@ export const selectSummarySources = (
         if (!covered) selected.push(message)
     }
     return selected
+}
+
+export const countUnsummarizedMessages = (messages: ChatMessage[], summaries: ChatSummary[]) => {
+    const accepted = summaries.filter(
+        (summary) => summary.status === 'accepted' && summary.content.trim()
+    )
+    return messages.filter(
+        (message) =>
+            hasVisibleSummaryContent(message) &&
+            !accepted.some(
+                (summary) =>
+                    message.id >= summary.start_entry_id && message.id <= summary.end_entry_id
+            )
+    ).length
 }
 
 export const summaryTranscript = (messages: ChatMessage[]) =>

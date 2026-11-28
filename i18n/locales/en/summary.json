@@ -65,5 +65,13 @@
     "summary.inputCoverage": "{{count}} source summaries",
     "summary.previous": "Previous summaries",
     "summary.current": "Current summaries",
-    "summary.compressionFallback": "Until this draft is resolved, replies use accepted summaries and the history that fits."
+    "summary.compressionFallback": "Until this draft is resolved, replies use accepted summaries and the history that fits.",
+    "summary.retainCount": "Keep Recent Messages Unsummarized",
+    "summary.retainCountDescription": "The newest {{count}} messages stay intact in Active Messages instead of being compressed into the summary.",
+    "summary.retainCountDescription_one": "The newest {{count}} message stays intact in Active Messages instead of being compressed into the summary.",
+    "summary.retainCountDescription_other": "The newest {{count}} messages stay intact in Active Messages instead of being compressed into the summary.",
+    "summary.notEnoughOlderMessages": "Not enough older messages to summarize yet. The newest {{count}} messages stay unsummarized.",
+    "summary.notEnoughOlderMessages_one": "Not enough older messages to summarize yet. The newest {{count}} message stays unsummarized.",
+    "summary.notEnoughOlderMessages_other": "Not enough older messages to summarize yet. The newest {{count}} messages stay unsummarized.",
+    "summary.notEnoughHistory": "Not enough older messages to summarize yet."
 }

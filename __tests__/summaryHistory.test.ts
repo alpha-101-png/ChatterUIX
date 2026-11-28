@@ -1,5 +1,7 @@
 import type { ChatSummary } from '../db/schema'
 import {
+    countUnsummarizedMessages,
+    normalizeSummaryRetainCount,
     selectSummarySources,
     summarizeHistory,
     summaryCutoff,
@@ -101,4 +103,32 @@ test('replacing a draft can expand its sources while ordinary regeneration keeps
     expect(
         selectSummarySources(messages, [draft, accepted], 1, true).map((entry) => entry.id)
     ).toEqual([1, 2, 3])
+})
+
+test('sliding retention buffer excludes the newest N messages from summarization and preserves them raw', () => {
+    const tenMessages = Array.from({ length: 10 }, (_, index) => message(index + 1))
+    expect(summaryCutoff(tenMessages.slice(0, 6), 6)).toBeUndefined()
+    expect(selectSummarySources(tenMessages.slice(0, 6), [], undefined, false, undefined, 6)).toEqual(
+        []
+    )
+    expect(summaryCutoff(tenMessages, 6)).toBe(4)
+    expect(
+        selectSummarySources(tenMessages, [], undefined, false, undefined, 6).map(
+            (entry) => entry.id
+        )
+    ).toEqual([1, 2, 3, 4])
+    // Trailing empty assistant placeholder does not consume a retention buffer slot.
+    expect(summaryCutoff([...tenMessages, message(11, '', false)], 6)).toBe(4)
+    // Overlapping summary cannot hide any of the newest 6 retained messages.
+    const overlapping = summary(1, 1, 7)
+    const keptRaw = summarizeHistory(tenMessages, [overlapping], summaryCutoff(tenMessages, 6))
+    expect(keptRaw.map((entry) => entry.id)).toEqual(tenMessages.map((entry) => entry.id))
+    // Valid older summary leaves the newest 6 messages intact.
+    const older = summary(2, 1, 4)
+    const compressed = summarizeHistory(tenMessages, [older], summaryCutoff(tenMessages, 6))
+    expect(compressed.slice(1).map((entry) => entry.id)).toEqual([5, 6, 7, 8, 9, 10])
+    expect(countUnsummarizedMessages(tenMessages, [older])).toBe(6)
+    expect(normalizeSummaryRetainCount(undefined)).toBe(6)
+    expect(normalizeSummaryRetainCount(25)).toBe(20)
+    expect(normalizeSummaryRetainCount(-3)).toBe(0)
 })

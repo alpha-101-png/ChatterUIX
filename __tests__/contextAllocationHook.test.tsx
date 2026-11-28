@@ -18,8 +18,9 @@ jest.mock('../lib/queries/contextAllocation', () => ({
     contextLorebooks: () => ({ source: 'books' }),
 }))
 jest.mock('../lib/summaries/db', () => ({ summaryList: () => ({ source: 'summaries' }) }))
+let mockSummarySettings = { enabled: true, summaryRetainCount: 0 }
 jest.mock('../lib/summaries/settingsStore', () => ({
-    useSummarySettingsStore: (select: any) => select({ enabled: true }),
+    useSummarySettingsStore: (select: any) => select(mockSummarySettings),
 }))
 jest.mock('../lib/state/AppMode', () => ({ useAppMode: () => ({ appMode: 'remote' }) }))
 jest.mock('../lib/state/characters', () => ({
@@ -44,6 +45,7 @@ const { create } = require('react-test-renderer')
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let mockData: Record<string, any[]>
 beforeEach(() => {
+    mockSummarySettings = { enabled: true, summaryRetainCount: 0 }
     mockData = {
         history: [
             {
@@ -145,5 +147,58 @@ test('summary savings compare covered history against the replacement text', asy
         100 - Math.ceil('[Summary of earlier conversation]\nMemory'.length / 4)
     )
     expect(result.values.history).toBe(200 - result.summarySavings)
+    await act(async () => screen.unmount())
+})
+
+test('context allocation keeps newest summaryRetainCount messages in active messages and excludes overlapping summaries', async () => {
+    mockSummarySettings = { enabled: true, summaryRetainCount: 6 }
+    mockData.history = Array.from({ length: 10 }, (_, index) => ({
+        id: index + 1,
+        token_length: 20,
+        content_length: 80,
+        has_content: 1,
+        is_user: index % 2 === 0,
+        reasoning_length: 0,
+    }))
+    mockData.summaries = [
+        {
+            id: 1,
+            status: 'accepted',
+            enabled: true,
+            content: 'Memory',
+            start_entry_id: 1,
+            end_entry_id: 4,
+        },
+    ]
+    let result!: ReturnType<typeof useContextAllocation>
+    const Consumer = () => {
+        result = useContextAllocation()
+        return null
+    }
+    let screen!: ReturnType<typeof create>
+    await act(async () => {
+        screen = create(<Consumer />)
+    })
+    const activeTokens = result.items.history.find((item) => item.key === 'messages')?.tokens
+    const summaryTokens = result.items.history.find((item) => item.key === 'summaries')?.tokens
+    expect(activeTokens).toBe(120) // newest 6 messages (5..10) * 20 tokens
+    expect(summaryTokens).toBe(Math.ceil('[Summary of earlier conversation]\nMemory'.length / 4))
+    expect(result.summarySavings).toBe(80 - summaryTokens!)
+
+    // If a summary overlaps the newest 6 messages (5..10), it is excluded so all 6 remain active.
+    mockData.summaries = [
+        {
+            id: 2,
+            status: 'accepted',
+            enabled: true,
+            content: 'Memory',
+            start_entry_id: 1,
+            end_entry_id: 6,
+        },
+    ]
+    await act(async () => screen.update(<Consumer />))
+    expect(result.items.history.find((item) => item.key === 'messages')?.tokens).toBe(200)
+    expect(result.items.history.find((item) => item.key === 'summaries')?.tokens).toBe(0)
+    expect(result.summarySavings).toBe(0)
     await act(async () => screen.unmount())
 })

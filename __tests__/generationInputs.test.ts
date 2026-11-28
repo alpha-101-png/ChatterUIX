@@ -1,4 +1,5 @@
 import { defaultSamplerConfig } from '../lib/constants/SamplerData'
+import { collectContext } from '../lib/engine/API/ContextBuilder'
 import { useConnectionStore } from '../lib/engine/API/connectionStore'
 import { getDataSources } from '../lib/engine/DataSources'
 import {
@@ -255,4 +256,70 @@ test('preflight aggregates older cached counts instead of reading older message 
         10,
         expect.objectContaining({ throughId: 100, beforeId: 90 })
     )
+})
+
+test('prepareGenerationContext and collectContext retain newest summaryRetainCount raw messages even when a summary is active', async () => {
+    const inputs = captureGenerationInputs(10, 'remote')
+    inputs.instruct = {
+        ...inputs.instruct,
+        system_prompt_format: '',
+        system_prompt: '',
+        names: false,
+        timestamp: false,
+    }
+    inputs.summaryRetainCount = 6
+    inputs.history = undefined
+    inputs.messages = Array.from({ length: 10 }, (_, index) => ({
+        id: index + 1,
+        chat_id: 10,
+        is_user: index % 2 === 0,
+        name: index % 2 === 0 ? 'User One' : 'Character One',
+        order: 0,
+        swipe_id: 0,
+        swipes: [{ id: index + 1, entry_id: index + 1, swipe: `m${index + 1}`, active: true }],
+        attachments: [],
+    })) as any
+    inputs.summaries = [
+        {
+            id: 1,
+            chat_id: 10,
+            kind: 'history',
+            content: 'Earlier summary',
+            status: 'accepted',
+            enabled: true,
+            source_changed: false,
+            notice_dismissed: false,
+            start_entry_id: 1,
+            end_entry_id: 4,
+            eligible_end_id: 4,
+            replaces_id: null,
+            attempt_count: 1,
+            error: null,
+            created_at: 0,
+        },
+    ]
+    jest.mocked(Chats.actions.countMessageTokens).mockImplementation(
+        async (entry) => entry.swipes[0].swipe.length
+    )
+
+    const prepared = await prepareGenerationContext(inputs, { recordStats: false })
+    expect(prepared.messages.map((entry) => entry.id)).toEqual([-10001, 5, 6, 7, 8, 9, 10])
+
+    // When context budget is full, newest raw messages are prioritized over the older summary.
+    const rawBudget = [5, 6, 7, 8, 9, 10].reduce((sum, id) => sum + `m${id}`.length, 0)
+    const packed = await collectContext({
+        ...prepared,
+        apiConfig: template,
+        apiValues: connection,
+        maxLength: rawBudget,
+        mode: 'chat',
+    })
+    expect(packed.messages.map((entry) => entry.content)).toEqual([
+        'm5',
+        'm6',
+        'm7',
+        'm8',
+        'm9',
+        'm10',
+    ])
 })

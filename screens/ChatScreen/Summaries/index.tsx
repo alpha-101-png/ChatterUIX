@@ -17,24 +17,58 @@ import type { ChatSummary } from '@db/schema'
 import { isDeferredTaskActive, type DeferredTask } from '@lib/engine/generation/deferredState'
 import { useDeferredTasks } from '@lib/engine/generation/hooks'
 import { cancelDeferredTask } from '@lib/engine/generation/scheduler'
-import { deleteSummary, generateSummary, saveSummary } from '@lib/engine/summaries/actions'
+import {
+    deleteSummary,
+    generateSummary,
+    saveSummary,
+    SummaryInsufficientHistoryError,
+} from '@lib/engine/summaries/actions'
 import { useLiveQuerySync } from '@lib/hooks/liveQuery'
 import { contextHistory } from '@lib/queries/contextAllocation'
 import { Logger } from '@lib/state/Logger'
 import { summaryManagerList, summaryInputList } from '@lib/summaries/db'
+import {
+    eligibleSummaryCutoff,
+    normalizeSummaryRetainCount,
+    usableSummariesBefore,
+} from '@lib/summaries/history'
 import { useSummaryPanelState } from '@lib/summaries/panelState'
 import { useSummarySettingsStore } from '@lib/summaries/settingsStore'
 import { Theme } from '@lib/theme/ThemeManager'
+
+const runSummaryAction = (t: ReturnType<typeof useTranslation>['t'], action: () => unknown) => {
+    try {
+        action()
+    } catch (error) {
+        if (error instanceof SummaryInsufficientHistoryError) {
+            Logger.warnToast(
+                error.retainCount > 0 && error.unsummarizedCount <= error.retainCount
+                    ? t('summary.notEnoughOlderMessages', {
+                          count: error.retainCount,
+                          defaultValue:
+                              'Not enough older messages to summarize yet. The newest {{count}} messages stay unsummarized.',
+                      })
+                    : t('summary.notEnoughHistory', {
+                          defaultValue: 'Not enough older messages to summarize yet.',
+                      })
+            )
+            return
+        }
+        Logger.errorToast(t('summary.actionFailed'), error)
+    }
+}
 
 const SummaryEditor = ({
     summary,
     task,
     enabled,
+    retainCount,
     select,
 }: {
     summary: ChatSummary & { sourceCount: number; inputCount?: number }
     task?: DeferredTask
     enabled: boolean
+    retainCount: number
     select: (id?: number) => void
 }) => {
     const { t } = useTranslation()
@@ -50,22 +84,21 @@ const SummaryEditor = ({
         key: ['summary-eligible-history', summary.chat_id],
         watch: [{ table: 'chat_entries' }, { table: 'chat_swipes' }],
     })
-    const eligibleEnd = history
-        .filter((message) => !message.is_user && message.has_content)
-        .at(-2)?.id
+    const eligibleEnd = eligibleSummaryCutoff(
+        history.map((message) => ({
+            id: message.id,
+            is_user: message.is_user,
+            hasContent: !!message.has_content,
+        })),
+        retainCount
+    )
     const canReplace =
         summary.status === 'draft' &&
         summary.kind !== 'consolidation' &&
         eligibleEnd !== undefined &&
         eligibleEnd > summary.end_entry_id
     const { color } = Theme.useTheme()
-    const run = (action: () => unknown) => {
-        try {
-            action()
-        } catch (error) {
-            Logger.errorToast(t('summary.actionFailed'), error)
-        }
-    }
+    const run = (action: () => unknown) => runSummaryAction(t, action)
     const handleDelete = () =>
         Alert.alert({
             title: t('summary.deleteTitle'),
@@ -266,6 +299,7 @@ const SummaryEditorSheet = ({
     summary,
     task,
     enabled,
+    retainCount,
     select,
     onSettings,
 }: Omit<ComponentProps<typeof SummaryEditor>, 'summary'> & {
@@ -306,6 +340,7 @@ const SummaryEditorSheet = ({
                         summary={summary}
                         task={task}
                         enabled={enabled}
+                        retainCount={retainCount}
                         select={selectSummary}
                     />
                 </>
@@ -323,6 +358,14 @@ const SummarySheet = () => {
     const { chatId, summaryId, select, close } = useSummaryPanelState()
     useFocusEffect(useCallback(() => () => close(), [close]))
     const enabled = useSummarySettingsStore((state) => state.enabled)
+    const retainCount = useSummarySettingsStore((state) =>
+        normalizeSummaryRetainCount(state.summaryRetainCount)
+    )
+    const { data: history } = useLiveQuerySync(contextHistory(chatId ?? -1), {
+        key: ['summary-sheet-history', chatId],
+        watch: [{ table: 'chat_entries' }, { table: 'chat_swipes' }],
+        enabled: chatId !== undefined,
+    })
     const { data: summaries } = useLiveQuerySync(summaryManagerList(chatId ?? -1), {
         key: ['summary-manager', chatId],
         watch: [
@@ -351,6 +394,32 @@ const SummarySheet = () => {
             ? item.status === 'replaced'
             : item.status === 'draft' || item.status === 'accepted'
     )
+    const accepted = summaries.filter((item) => item.status === 'accepted' && item.content.trim())
+    const realMessages = history.filter((item) => item.is_user || !!item.has_content)
+    const unsummarizedCount = realMessages.filter(
+        (item) => !accepted.some((s) => item.id >= s.start_entry_id && item.id <= s.end_entry_id)
+    ).length
+    const cutoff = eligibleSummaryCutoff(
+        history.map((item) => ({
+            id: item.id,
+            is_user: item.is_user,
+            hasContent: !!item.has_content,
+        })),
+        retainCount
+    )
+    const usable = usableSummariesBefore(cutoff, accepted)
+    const hasEligibleOlder =
+        cutoff !== undefined &&
+        realMessages.some(
+            (item) =>
+                item.id <= cutoff &&
+                !usable.some((s) => item.id >= s.start_entry_id && item.id <= s.end_entry_id)
+        )
+    const notEnoughOlderMessages =
+        enabled &&
+        chatId !== undefined &&
+        !hasEligibleOlder &&
+        !summaries.some((item) => item.status === 'draft')
     useEffect(() => {
         if (chatId !== undefined) ref.current?.open()
         else ref.current?.close()
@@ -359,13 +428,7 @@ const SummarySheet = () => {
         close()
         router.push('/summarySettings')
     }
-    const run = (action: () => unknown) => {
-        try {
-            action()
-        } catch (error) {
-            Logger.errorToast(t('summary.actionFailed'), error)
-        }
-    }
+    const run = (action: () => unknown) => runSummaryAction(t, action)
     return (
         <BottomSheet
             ref={ref}
@@ -396,6 +459,19 @@ const SummarySheet = () => {
             {!enabled && <TText>{t('summary.disabled')}</TText>}
             {summaries.some((item) => item.status === 'draft' && !taskFor(item.id)) && (
                 <TText style={{ color: color.warning._700 }}>{t('summary.paused')}</TText>
+            )}
+            {notEnoughOlderMessages && (
+                <TText color="400" size={12}>
+                    {retainCount > 0 && unsummarizedCount <= retainCount
+                        ? t('summary.notEnoughOlderMessages', {
+                              count: retainCount,
+                              defaultValue:
+                                  'Not enough older messages to summarize yet. The newest {{count}} messages stay unsummarized.',
+                          })
+                        : t('summary.notEnoughHistory', {
+                              defaultValue: 'Not enough older messages to summarize yet.',
+                          })}
+                </TText>
             )}
             {summaries.some((item) => item.status === 'replaced') && (
                 <ThemedButton
@@ -470,6 +546,7 @@ const SummarySheet = () => {
                 summary={summaries.find((item) => item.id === summaryId)}
                 task={task}
                 enabled={enabled}
+                retainCount={retainCount}
                 select={select}
                 onSettings={openSettings}
             />

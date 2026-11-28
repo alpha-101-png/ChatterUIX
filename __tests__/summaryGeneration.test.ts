@@ -15,6 +15,7 @@ import {
     generateSummary,
     prepareAutomaticSummary,
     deleteSummary,
+    SummaryInsufficientHistoryError,
 } from '../lib/engine/summaries/actions'
 import { getSummary } from '../lib/summaries/db'
 import { summaryMessage } from '../lib/summaries/history'
@@ -122,6 +123,7 @@ beforeEach(() => {
         autoMaxCoverage: 100,
         consolidateSummaries: false,
         maxOutputTokens: 128,
+        summaryRetainCount: 0,
         prompt: 'Summarize facts.',
     }
     jest.mocked(useSummarySettingsStore.getState).mockImplementation(() => settings)
@@ -555,4 +557,34 @@ test('cancelling consolidation retains an unfinished draft and its working sourc
     expect(getSummary(3)?.status).toBe('draft')
     expect(getSummary(3)?.error?.reason).toBe('cancelled')
     expect([getSummary(1)?.status, getSummary(2)?.status]).toEqual(['accepted', 'accepted'])
+})
+
+test('retention buffer blocks manual and automatic summarization when unsummarized messages <= retainCount', async () => {
+    delete settings.summaryRetainCount // Verify default of 6 applies when unset.
+    inputs.messages = Array.from({ length: 6 }, (_, index) => ({
+        ...summaryMessage(index + 1, 'a long source message '.repeat(20), index % 2 === 1),
+        name: 'Speaker',
+    }))
+    jest.mocked(Chats.db.query.chat).mockReturnValue({ messages: inputs.messages } as any)
+    expect(() => generateSummary(1, { inputs })).toThrow(SummaryInsufficientHistoryError)
+    expect(() => generateSummary(1, { inputs })).toThrow('Not enough older messages to summarize yet')
+    expect(await prepareAutomaticSummary(inputs)).toBeUndefined()
+    expect(mockRuns).toHaveLength(0)
+
+    const tenMessages = Array.from({ length: 10 }, (_, index) => ({
+        ...summaryMessage(index + 1, 'a long source message '.repeat(20), index % 2 === 1),
+        name: 'Speaker',
+    }))
+    inputs.messages = tenMessages
+    jest.mocked(Chats.db.query.chat).mockReturnValue({ messages: tenMessages } as any)
+    settings.summaryRetainCount = 6
+    await prepareAutomaticSummary(inputs)
+    expect(mockRuns).toHaveLength(1)
+    await mockRuns[0](new AbortController().signal)
+    expect(getSummary(1)?.end_entry_id).toBeLessThanOrEqual(4)
+    expect(getSummary(1)?.status).toBe('accepted')
+    // If summary covers 1..4, only 6 unsummarized messages remain (5..10), so generating again is blocked.
+    if (getSummary(1)?.end_entry_id === 4) {
+        expect(() => generateSummary(1, { inputs })).toThrow(SummaryInsufficientHistoryError)
+    }
 })

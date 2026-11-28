@@ -20,6 +20,8 @@ import {
     restrictConsolidationSources,
 } from '@lib/summaries/db'
 import {
+    countUnsummarizedMessages,
+    normalizeSummaryRetainCount,
     selectSummarySources,
     summaryCutoff,
     summaryMessage,
@@ -96,6 +98,22 @@ export const deleteSummary = (id: number) => {
     }
 }
 
+export class SummaryInsufficientHistoryError extends Error {
+    readonly retainCount: number
+    readonly unsummarizedCount: number
+
+    constructor(retainCount: number, unsummarizedCount: number) {
+        super(
+            retainCount > 0 && unsummarizedCount <= retainCount
+                ? `Not enough older messages to summarize yet (keeping the newest ${retainCount} messages unsummarized).`
+                : 'Not enough older messages to summarize yet.'
+        )
+        this.name = 'SummaryInsufficientHistoryError'
+        this.retainCount = retainCount
+        this.unsummarizedCount = unsummarizedCount
+    }
+}
+
 export const generateSummary = (
     chatId: number,
     options: {
@@ -112,6 +130,7 @@ export const generateSummary = (
 ) => {
     const settings = { ...useSummarySettingsStore.getState() }
     if (!settings.enabled) throw new Error('Enable summaries in Data Sources first')
+    const retainCount = normalizeSummaryRetainCount(settings.summaryRetainCount)
     const existing =
         options.summaryId === undefined ? undefined : assertSummaryEditable(options.summaryId)
     if (existing && existing.chat_id !== chatId) throw new Error('Summary belongs to another chat')
@@ -139,8 +158,8 @@ export const generateSummary = (
             ? (Chats.db.query.chat(chatId)?.messages ?? [])
             : inputs.messages
     const cutoff = inputs.history
-        ? generationHistoryCutoff(chatId, inputs.history, inputs.messages)
-        : summaryCutoff(messages)
+        ? generationHistoryCutoff(chatId, inputs.history, inputs.messages, retainCount)
+        : summaryCutoff(messages, retainCount)
     if (options.continueDraft && existing!.end_entry_id > (cutoff ?? -1))
         throw new Error('Draft now covers protected recent history; regenerate it instead')
     if (
@@ -163,9 +182,18 @@ export const generateSummary = (
               summaries,
               existing?.id,
               options.supersedeDraft,
-              options.sourceRange
+              options.sourceRange,
+              retainCount,
+              inputs.history ? (cutoff ?? null) : undefined
           )
-    if (!sources.length) throw new Error('Not enough eligible history to summarize')
+    if (!sources.length) {
+        if (!consolidating)
+            throw new SummaryInsufficientHistoryError(
+                retainCount,
+                countUnsummarizedMessages(messages, summaries)
+            )
+        throw new Error('Not enough eligible history to summarize')
+    }
     let draft =
         existing?.status === 'draft'
             ? existing
@@ -475,6 +503,7 @@ export const prepareAutomaticSummary = async (
 ) => {
     const settings = useSummarySettingsStore.getState()
     if (!settings.enabled || !settings.autoGenerate || options.signal?.aborted) return
+    const retainCount = normalizeSummaryRetainCount(settings.summaryRetainCount)
     const summaries = summaryList(inputs.chatId).all()
     const draft = summaries.find((summary) => summary.status === 'draft')
     if (
@@ -489,8 +518,8 @@ export const prepareAutomaticSummary = async (
         return
     if (!draft) {
         const cutoff = inputs.history
-            ? generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages)
-            : undefined
+            ? generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages, retainCount)
+            : summaryCutoff(inputs.messages, retainCount)
         const eligible = inputs.history
             ? cutoff !== undefined &&
               Chats.db.query.hasSummarySources(
@@ -498,7 +527,14 @@ export const prepareAutomaticSummary = async (
                   cutoff,
                   usableSummariesBefore(cutoff, summaries)
               )
-            : selectSummarySources(inputs.messages, summaries).length > 0
+            : selectSummarySources(
+                  inputs.messages,
+                  summaries,
+                  undefined,
+                  false,
+                  undefined,
+                  retainCount
+              ).length > 0
         if (!eligible && !settings.consolidateSummaries) return
     }
     const stats = await estimateGenerationContext({ ...inputs, summaries })
@@ -516,8 +552,8 @@ export const prepareAutomaticSummary = async (
             parentGenerationId: options.parentGenerationId,
         })
     const cutoff = inputs.history
-        ? generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages)
-        : summaryCutoff(inputs.messages)
+        ? generationHistoryCutoff(inputs.chatId, inputs.history, inputs.messages, retainCount)
+        : summaryCutoff(inputs.messages, retainCount)
     const used = usableSummariesBefore(cutoff, summaries)
     const items: CompressionItem[] = []
     const budget = stats.historyBudget
@@ -528,6 +564,7 @@ export const prepareAutomaticSummary = async (
             messages: inputs.messages,
             includeReasoning: false,
             summaries,
+            retainCount: retainCount,
         })
         let remaining = budget
         let stop = false

@@ -6,11 +6,17 @@ import ThemedTextInput from '@components/input/ThemedTextInput'
 import SettingsPage from '@components/settings/SettingsPage'
 import SectionTitle from '@components/text/SectionTitle'
 import TText from '@components/text/TText'
+import {
+    MAX_SUMMARY_RETAIN_COUNT,
+    MIN_SUMMARY_RETAIN_COUNT,
+    normalizeSummaryRetainCount,
+} from '@lib/summaries/history'
 import { useSummarySettingsStore } from '@lib/summaries/settingsStore'
 
 const SummarySettingsScreen = () => {
     const { t } = useTranslation()
     const settings = useSummarySettingsStore()
+    const retainCount = normalizeSummaryRetainCount(settings.summaryRetainCount)
     return (
         <SettingsPage title={t('summary.settings')}>
             <ThemedSwitchRow
@@ -83,6 +89,23 @@ const SummarySettingsScreen = () => {
                             />
                         </>
                     )}
+                    <ThemedSlider
+                        label={t('summary.retainCount', 'Keep Recent Messages Unsummarized')}
+                        min={MIN_SUMMARY_RETAIN_COUNT}
+                        max={MAX_SUMMARY_RETAIN_COUNT}
+                        step={1}
+                        value={retainCount}
+                        onValueChange={(summaryRetainCount) =>
+                            settings.update({ summaryRetainCount })
+                        }
+                    />
+                    <TText color="400" size={12}>
+                        {t('summary.retainCountDescription', {
+                            count: retainCount,
+                            defaultValue:
+                                'The newest {{count}} messages stay intact in Active Messages instead of being compressed into the summary.',
+                        })}
+                    </TText>
                     <ThemedSlider
                         label={t('summary.outputTokens')}
                         min={128}

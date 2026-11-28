@@ -15,7 +15,11 @@ import { Chats } from '@lib/state/chat'
 import { defaultSystemPromptFormat, Instructs, type InstructTokenCache } from '@lib/state/Instructs'
 import { useCurrentSampler } from '@lib/state/samplerStore'
 import { summaryList } from '@lib/summaries/db'
-import { usableSummariesBefore } from '@lib/summaries/history'
+import {
+    eligibleSummaryCutoff,
+    normalizeSummaryRetainCount,
+    usableSummariesBefore,
+} from '@lib/summaries/history'
 import { useSummarySettingsStore } from '@lib/summaries/settingsStore'
 import { contextAllocation } from '@lib/utils/contextAllocation'
 import { applyMacros, createMacroValues } from '@lib/utils/Macros'
@@ -39,6 +43,9 @@ export const useContextAllocation = (generatedLength?: number) => {
     const user = Characters.useUserStore((state) => state.card)
     const instruct = Instructs.useInstruct((state) => state.data) ?? Instructs.defaultInstruct
     const summariesEnabled = useSummarySettingsStore((state) => state.enabled)
+    const summaryRetainCount = useSummarySettingsStore((state) =>
+        normalizeSummaryRetainCount(state.summaryRetainCount)
+    )
     const now = new Date()
     const macros = createMacroValues({ char: character?.name ?? '', user: user?.name ?? '' }, now)
     const estimate = (text?: string) => Math.ceil(applyMacros(text ?? '', macros).length / 4)
@@ -110,7 +117,14 @@ export const useContextAllocation = (generatedLength?: number) => {
                 )
             ) + (textMode ? cache.system_suffix_length : 0),
     })
-    const cutoff = messages.filter((message) => !message.is_user && message.has_content).at(-2)?.id
+    const cutoff = eligibleSummaryCutoff(
+        messages.map((message) => ({
+            id: message.id,
+            is_user: message.is_user,
+            hasContent: !!message.has_content,
+        })),
+        summaryRetainCount
+    )
     const selected = summariesEnabled ? usableSummariesBefore(cutoff, summaries) : []
     const raw = messages.filter(
         (message) =>

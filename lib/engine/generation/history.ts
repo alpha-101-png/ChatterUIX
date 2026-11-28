@@ -7,7 +7,18 @@ const CAPTURE_SIZE = 2
 const METADATA_BATCH_SIZE = 128
 type HistoryHint = ReturnType<typeof Chats.db.query.historyHints>[number]
 
-export const captureHistory = (chatId: number, includeReasoning: boolean) => {
+export type GenerationHistory = {
+    throughId: number
+    cutoff: number | undefined
+    retainCount?: number
+    snapshots: Map<number, ChatMessage>
+}
+
+export const captureHistory = (
+    chatId: number,
+    includeReasoning: boolean,
+    retainCount = 0
+): { messages: ChatMessage[]; history: GenerationHistory } => {
     const messages = Chats.db.live
         .historyPage(chatId, { limit: CAPTURE_SIZE, includeReasoning })
         .sync()
@@ -17,18 +28,19 @@ export const captureHistory = (chatId: number, includeReasoning: boolean) => {
         messages,
         history: {
             throughId,
-            cutoff: Chats.db.query.historyCutoff(chatId, throughId),
+            cutoff: Chats.db.query.historyCutoff(chatId, throughId, [], retainCount),
+            retainCount,
             // Reuse fetched values across preparation and deferred title generation.
             snapshots: new Map(messages.map((message) => [message.id, message])),
         },
     }
 }
-export type GenerationHistory = ReturnType<typeof captureHistory>['history']
 
 export const generationHistoryCutoff = (
     chatId: number,
     history: GenerationHistory,
-    messages: ChatMessage[]
+    messages: ChatMessage[],
+    retainCount = 0
 ) => {
     const cleared = messages
         .filter(
@@ -40,9 +52,12 @@ export const generationHistoryCutoff = (
                     ?.swipes.some((swipe) => swipe.active && swipe.swipe.trim())
         )
         .map((message) => message.id)
-    return cleared.length
-        ? Chats.db.query.historyCutoff(chatId, history.throughId, cleared)
-        : history.cutoff
+    if (
+        cleared.length ||
+        (history.retainCount !== undefined && history.retainCount !== retainCount)
+    )
+        return Chats.db.query.historyCutoff(chatId, history.throughId, cleared, retainCount)
+    return history.cutoff
 }
 
 export const createHistoryReader = ({
@@ -51,6 +66,7 @@ export const createHistoryReader = ({
     messages,
     includeReasoning,
     summaries,
+    retainCount = 0,
     estimateOverhead = () => 0,
 }: {
     chatId: number
@@ -58,10 +74,11 @@ export const createHistoryReader = ({
     messages: ChatMessage[]
     includeReasoning: boolean
     summaries: ChatSummary[]
+    retainCount?: number
     estimateOverhead?: (hint: HistoryHint) => number
 }) => {
     const selected = usableSummariesBefore(
-        generationHistoryCutoff(chatId, history, messages),
+        generationHistoryCutoff(chatId, history, messages, retainCount),
         summaries
     )
     // In-memory continuations/regenerations override the persisted active swipe.

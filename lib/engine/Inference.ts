@@ -100,7 +100,11 @@ export async function submitMessage(chatId: number, input: SubmitMessageInput) {
             const swipe = message.swipes.find((item) => item.active)
             if (!swipe) throw new Error('New response has no active swipe')
             attachGenerationSwipe(generation.id, swipe.id)
-            const captured = captureHistory(chatId, inputs.includeReasoning)
+            const captured = captureHistory(
+                chatId,
+                inputs.includeReasoning,
+                inputs.summaryRetainCount
+            )
             inputs.messages = captured.messages
             inputs.history = captured.history
             getGenerationRuntime(generation.id).inputs = inputs

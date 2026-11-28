@@ -901,6 +901,51 @@ describeSQLite('paged inference history', () => {
             .sync()
         expect(withReasoning[0].swipes[0].reasoning?.content).toBe('private thought')
     })
+    test('retention buffer cutoff and paged reader exclude overlapping summaries and retain newest messages', () => {
+        const chatId = db.create.chat({
+            character_id: 1,
+            messages: Array.from({ length: 10 }, (_, i) => ({
+                name: i % 2 === 0 ? 'User' : 'Character',
+                is_user: i % 2 === 0,
+                swipes: [{ swipe: `entry ${i + 1}`, active: true }],
+            })),
+        })
+        const all = db.query.chat(chatId)!.messages
+        expect(db.query.historyCutoff(chatId, all.at(-1)!.id, [], 6)).toBe(all[3].id)
+        expect(db.query.historyCutoff(chatId, all[5].id, [], 6)).toBeUndefined()
+
+        // Summary covering entries 1..6 overlaps the newest 6 messages (5..10) so it is skipped.
+        const overlappingDraft = createSummaryDraft(chatId, all.slice(0, 6))
+        acceptSummary(overlappingDraft.id, { content: 'Overlapping memory' })
+        const overlapping = getSummary(overlappingDraft.id)!
+        const captured = captureHistory(chatId, false, 6)
+        expect(captured.history.cutoff).toBe(all[3].id)
+        const rawReader = createHistoryReader({
+            chatId,
+            ...captured,
+            includeReasoning: false,
+            summaries: [overlapping],
+            retainCount: 6,
+        })
+        expect(rawReader.read().map((entry) => entry.id)).toEqual(all.map((entry) => entry.id))
+
+        // Summary covering entries 1..4 stays active and retains entries 5..10 raw.
+        const olderDraft = createSummaryDraft(chatId, all.slice(0, 4))
+        acceptSummary(olderDraft.id, { content: 'Older memory' })
+        const older = getSummary(olderDraft.id)!
+        const activeReader = createHistoryReader({
+            chatId,
+            ...captured,
+            includeReasoning: false,
+            summaries: [older],
+            retainCount: 6,
+        })
+        const page = activeReader.read()
+        expect(page[0].id).toBe(-10_000 - older.id)
+        expect(page.slice(1).map((entry) => entry.id)).toEqual(
+            all.slice(4).map((entry) => entry.id)
+        )
+    })
 })
 
 describeSQLite('summary consolidation provenance', () => {
