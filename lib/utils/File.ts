@@ -1,6 +1,7 @@
 import { localDownload } from '@vali98/react-native-fs'
 import { getDocumentAsync } from 'expo-document-picker'
 import { Directory, File, FileMode, Paths } from 'expo-file-system'
+import { isAvailableAsync as isSharingAvailableAsync, shareAsync } from 'expo-sharing'
 
 import { Logger } from '../state/Logger'
 
@@ -140,6 +141,16 @@ export const copyFile = async ({ from, to }: { from: string; to: string }) => {
     }
 }
 
+export const copyFileSync = ({ from, to }: { from: string; to: string }) => {
+    try {
+        new File(from).copy(new File(to))
+        return true
+    } catch (e) {
+        Logger.error('Failed to copy: ' + e)
+        return false
+    }
+}
+
 export const deleteFile = (path: string) => {
     try {
         const file = new File(path)
@@ -161,6 +172,43 @@ export const readStringAsync = async (path: string) => {
 
 export const writeBase64File = async (path: string, content: string) => {
     return await new File(path).write(content, { encoding: 'base64' })
+}
+
+export const readFileBytes = async (path: string): Promise<Uint8Array> => {
+    return await new File(path).bytes()
+}
+
+export const writeFileBytes = (path: string, content: Uint8Array) => {
+    new File(path).write(content)
+}
+
+export const writeCacheFile = (
+    filename: string,
+    content: string | Uint8Array,
+    encoding?: 'base64' | 'utf8'
+) => {
+    const file = new File(Paths.cache, filename)
+    if (typeof content === 'string') {
+        file.write(content, { encoding: encoding ?? 'utf8' })
+    } else {
+        file.write(content)
+    }
+    return file.uri
+}
+
+export const shareOrSaveFile = async (
+    uri: string,
+    options: { mimeType: string; dialogTitle?: string; UTI?: string }
+) => {
+    if (await isSharingAvailableAsync()) {
+        await shareAsync(uri, {
+            mimeType: options.mimeType,
+            dialogTitle: options.dialogTitle,
+            UTI: options.UTI,
+        })
+        return
+    }
+    await localDownload(uri.replace('file://', ''))
 }
 
 export const fileInfo = (path: string) => {

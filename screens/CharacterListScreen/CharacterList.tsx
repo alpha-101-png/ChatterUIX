@@ -7,13 +7,17 @@ import { useShallow } from 'zustand/react/shallow'
 
 import GuideHost from '@components/guides/GuideHost'
 import GuideTarget from '@components/guides/GuideTarget'
+import Alert from '@components/views/Alert'
+import { useBottomSheetRef } from '@components/views/BottomSheet'
 import Drawer from '@components/views/Drawer'
 import HeaderButton from '@components/views/HeaderButton'
 import HeaderTitle from '@components/views/HeaderTitle'
+import InputSheet from '@components/views/InputSheet'
 import { useLiveQueryAsync } from '@lib/hooks/liveQuery'
 import { Characters, CharacterCardSummary } from '@lib/state/characters'
 import { useSelectionStore } from '@lib/state/characters/selectionStore'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
+import { Logger } from '@lib/state/Logger'
 import { TagHider } from '@lib/state/TagHider'
 
 import CharacterListHeader from './CharacterListHeader'
@@ -50,6 +54,8 @@ const CharacterList: React.FC = () => {
     const hiddenTags = TagHider.useHiddenTags()
     const [pages, setPages] = useState(3)
     const [previousLength, setPreviousLength] = useState(0)
+    const renameRef = useBottomSheetRef()
+    const [editingFolder, setEditingFolder] = useState<{ id: number; name: string } | null>(null)
 
     const { selectionMode, exitSelectionMode } = useSelectionStore(
         useShallow((state) => ({
@@ -59,13 +65,75 @@ const CharacterList: React.FC = () => {
     )
 
     const isRoot = currentFolderId === undefined
+    const trimmedSearch = textFilter.trim()
+    const isGlobalSearch = isRoot && (trimmedSearch.length > 0 || tagFilter.length > 0)
 
-    // Exit selection mode and reset pagination when switching folders
+    // Exit selection mode and reset pagination when switching folders or global search
     useEffect(() => {
         exitSelectionMode()
         setPages(3)
         setPreviousLength(0)
-    }, [currentFolderId, exitSelectionMode])
+    }, [currentFolderId, isGlobalSearch, exitSelectionMode])
+
+    useEffect(() => {
+        if (editingFolder) {
+            renameRef.current?.open()
+        }
+    }, [editingFolder, renameRef])
+
+    const handleTogglePinFolder = async (folder: FolderListingItem) => {
+        if (folder.id === -1) return
+        await Characters.db.folders.setPinned(folder.id, !folder.isPinned)
+    }
+
+    const handleRenameFolder = (folder: FolderListingItem) => {
+        if (folder.id === -1) return
+        setEditingFolder({ id: folder.id, name: folder.name })
+    }
+
+    const handleConfirmRenameFolder = async (name: string) => {
+        if (!editingFolder) return
+        const trimmed = name.trim()
+        if (!trimmed) return
+        await Characters.db.folders.rename(editingFolder.id, trimmed)
+        Logger.info(
+            t('character.folders.manager.renamed', {
+                name: trimmed,
+                defaultValue: 'Renamed folder to {{name}}',
+            })
+        )
+    }
+
+    const handleDeleteFolder = (folder: FolderListingItem) => {
+        if (folder.id === -1) return
+        Alert.alert({
+            title: t('character.folders.manager.deleteTitle', 'Delete Folder'),
+            description: t('character.folders.manager.deleteDescription', {
+                name: folder.name,
+                defaultValue:
+                    "Are you sure you want to delete the folder '{{name}}'? Characters inside will become ungrouped.",
+            }),
+            buttons: [
+                { label: t('common.actions.cancel', 'Cancel') },
+                {
+                    label: t('common.actions.delete', 'Delete'),
+                    type: 'warning',
+                    onPress: async () => {
+                        if (useCharacterSortStore.getState().currentFolderId === folder.id) {
+                            setCurrentFolder(undefined)
+                        }
+                        await Characters.db.folders.remove(folder.id)
+                        Logger.info(
+                            t('character.folders.manager.deleted', {
+                                name: folder.name,
+                                defaultValue: 'Deleted folder: {{name}}',
+                            })
+                        )
+                    },
+                },
+            ],
+        })
+    }
 
     useFocusEffect(
         useCallback(() => {
@@ -84,7 +152,7 @@ const CharacterList: React.FC = () => {
         }, [])
     )
 
-    // Character live query — only active inside a folder (including Ungrouped)
+    // Character live query — active inside a folder (including Ungrouped) or during global root search
     const { data, updatedAt } = useLiveQueryAsync(
         Characters.db.live.cardListWindow({
             type: 'character',
@@ -95,7 +163,7 @@ const CharacterList: React.FC = () => {
             searchText: textFilter,
             includedTags: tagFilter,
             hiddenTags: hiddenTags,
-            folderId: isRoot ? null : currentFolderId,
+            folderId: isRoot ? undefined : currentFolderId,
         }),
         {
             key: [
@@ -107,8 +175,9 @@ const CharacterList: React.FC = () => {
                 hiddenTags,
                 pages,
                 currentFolderId,
+                isGlobalSearch,
             ],
-            enabled: !isRoot,
+            enabled: !isRoot || isGlobalSearch,
             watch: [
                 { table: 'characters' },
                 { table: 'characterLinks' },
@@ -117,6 +186,7 @@ const CharacterList: React.FC = () => {
                 { table: 'chats' },
                 { table: 'chat_entries' },
                 { table: 'chat_swipes' },
+                { table: 'character_folders' },
                 { table: 'character_folder_members' },
             ],
         }
@@ -140,7 +210,7 @@ const CharacterList: React.FC = () => {
     })
 
     const characterList: CharacterCardSummary[] = useMemo(() => {
-        if (isRoot) return []
+        if (isRoot && !isGlobalSearch) return []
         return data.map((item) => ({
             ...item,
             latestChatId: item.chats[0]?.id,
@@ -149,29 +219,25 @@ const CharacterList: React.FC = () => {
             last_modified: item.last_modified ?? 0,
             tags: item.tags.map((tagItem) => tagItem.tag.tag),
             folderId: item.folder_membership?.folder_id ?? null,
+            folderName: item.folder_membership?.folder?.name ?? null,
         }))
-    }, [data, isRoot])
+    }, [data, isRoot, isGlobalSearch])
 
-    // Build the list: root shows ONLY folders + Ungrouped; inside a folder shows ONLY characters
+    // Build the list: root shows folders + Ungrouped (or matching characters during global search); inside a folder shows characters
     const listRows: ListRow[] = useMemo(() => {
-        if (!isRoot) {
+        if (!isRoot || isGlobalSearch) {
             return characterList.map((c) => ({ kind: 'character', character: c }))
         }
 
-        const folderRows: FolderRow[] = folderData
-            .filter(
-                (f) =>
-                    !textFilter ||
-                    f.name.toLocaleLowerCase().includes(textFilter.toLocaleLowerCase())
-            )
-            .map((f) => ({
-                kind: 'folder',
-                folder: {
-                    id: f.id,
-                    name: f.name,
-                    memberCount: f.members.length,
-                },
-            }))
+        const folderRows: FolderRow[] = folderData.map((f) => ({
+            kind: 'folder',
+            folder: {
+                id: f.id,
+                name: f.name,
+                memberCount: f.members.length,
+                isPinned: f.isPinned,
+            },
+        }))
 
         // Virtual "Ungrouped" folder — live unassigned count
         const ungroupedRow: FolderRow = {
@@ -183,17 +249,13 @@ const CharacterList: React.FC = () => {
             },
         }
 
-        const showUngrouped =
-            !textFilter ||
-            ungroupedRow.folder.name.toLocaleLowerCase().includes(textFilter.toLocaleLowerCase())
-
-        return [...folderRows, ...(showUngrouped ? [ungroupedRow] : [])]
-    }, [isRoot, folderData, characterList, ungroupedCount, textFilter, t])
+        return [...folderRows, ungroupedRow]
+    }, [isRoot, isGlobalSearch, folderData, characterList, ungroupedCount, t])
 
     // All character IDs in the current view (for Select All)
     const allCharacterIds = useMemo(() => characterList.map((c) => c.id), [characterList])
 
-    const hasSearchFilter = Boolean(textFilter || tagFilter.length > 0)
+    const hasSearchFilter = Boolean(trimmedSearch || tagFilter.length > 0)
 
     // do not render when not shown, optimizes some rerenders
     const settingsOpen = Drawer.useDrawerStore((state) => !!state.values[Drawer.ID.SETTINGS])
@@ -217,7 +279,9 @@ const CharacterList: React.FC = () => {
                 )}
             />
 
-            <CharacterListHeader resultLength={isRoot ? listRows.length : characterList.length} />
+            <CharacterListHeader
+                resultLength={isRoot && !isGlobalSearch ? listRows.length : characterList.length}
+            />
             <GuideTarget
                 id="main.characters"
                 style={{ flex: 1 }}
@@ -227,7 +291,7 @@ const CharacterList: React.FC = () => {
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ rowGap: 16 }}
                     data={listRows}
-                    extraData={selectionMode}
+                    extraData={`${selectionMode}-${isGlobalSearch}`}
                     keyExtractor={(item) =>
                         item.kind === 'folder'
                             ? `folder-${item.folder.id}`
@@ -238,6 +302,7 @@ const CharacterList: React.FC = () => {
                             return (
                                 <FolderListing
                                     folder={item.folder}
+                                    menuDisabled={path !== '/'}
                                     onPress={(f) => {
                                         if (f.id === -1) {
                                             setCurrentFolder(null)
@@ -245,6 +310,9 @@ const CharacterList: React.FC = () => {
                                             setCurrentFolder(f.id)
                                         }
                                     }}
+                                    onTogglePin={handleTogglePinFolder}
+                                    onRename={handleRenameFolder}
+                                    onDelete={handleDeleteFolder}
                                 />
                             )
                         }
@@ -252,12 +320,13 @@ const CharacterList: React.FC = () => {
                             <CharacterListing
                                 character={item.character}
                                 navigationPending={navigationPending}
+                                showFolderBadge={isGlobalSearch}
                             />
                         )
                     }}
                     onEndReachedThreshold={1}
                     onEndReached={() => {
-                        if (isRoot) return
+                        if (isRoot && !isGlobalSearch) return
                         if (previousLength === data.length) {
                             return
                         }
@@ -270,7 +339,7 @@ const CharacterList: React.FC = () => {
                         if (pages !== 3) setPages(3)
                     }}
                     ListEmptyComponent={() => {
-                        if (isRoot) {
+                        if (isRoot && !isGlobalSearch) {
                             return hasSearchFilter ? <CharactersSearchEmpty /> : null
                         }
                         if (!updatedAt) return null
@@ -278,6 +347,24 @@ const CharacterList: React.FC = () => {
                     }}
                 />
             </GuideTarget>
+
+            <InputSheet
+                ref={renameRef}
+                title={t('character.folders.manager.renameTitle', 'Rename Folder')}
+                placeholder={t('character.folders.manager.renamePlaceholder', 'New folder name…')}
+                defaultValue={editingFolder?.name ?? ''}
+                inputKey={editingFolder?.id}
+                autoFocus
+                confirmLabel={t('common.actions.save', 'Save')}
+                verifyText={(text) =>
+                    text.trim().length === 0
+                        ? t('character.folders.errors.nameEmpty', 'Folder name cannot be empty')
+                        : ''
+                }
+                onConfirm={handleConfirmRenameFolder}
+                onClose={() => setEditingFolder(null)}
+                bodyContainerStyle={{ paddingTop: 16 }}
+            />
 
             {/* Selection bar at bottom */}
             {selectionMode && <SelectionBar allCharacterIds={allCharacterIds} />}

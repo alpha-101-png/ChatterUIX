@@ -8,6 +8,7 @@ import ContextMenu from '@components/views/ContextMenu'
 import InputSheet from '@components/views/InputSheet'
 import { Characters } from '@lib/state/characters'
 import { useCharacterImportState } from '@lib/state/characters/importState'
+import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { Logger } from '@lib/state/Logger'
 
 type CharacterNewMenuProps = {
@@ -36,7 +37,11 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
         if (navigationPending.current) return
         navigationPending.current = true
         try {
-            const id = await Characters.db.create.blankCard(text)
+            const currentFolderId = useCharacterSortStore.getState().currentFolderId
+            const id = await Characters.db.create.blankCard(
+                text,
+                typeof currentFolderId === 'number' ? { folderId: currentFolderId } : undefined
+            )
             selectCharacterCard(id)
             router.push('/characterEditor')
         } finally {
@@ -87,7 +92,13 @@ const CharacterNewMenu: React.FC<CharacterNewMenuProps> = ({ navigationPending }
                         disabled={isImporting}
                         onPress={async () => {
                             try {
-                                await Characters.actions.importCards()
+                                const currentFolderId =
+                                    useCharacterSortStore.getState().currentFolderId
+                                await Characters.actions.importCards(
+                                    typeof currentFolderId === 'number'
+                                        ? { folderId: currentFolderId }
+                                        : undefined
+                                )
                             } catch (error) {
                                 Logger.errorToast(t('character.editor.errors.createFailed', 'Failed to create character'), error)
                             }

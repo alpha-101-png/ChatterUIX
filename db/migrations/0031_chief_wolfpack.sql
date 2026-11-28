@@ -1,0 +1,1 @@
+ALTER TABLE `character_folders` ADD `is_pinned` integer DEFAULT false NOT NULL;

@@ -1,12 +1,21 @@
-import { extractPngTextChunk } from '@vali98/react-native-png-utils'
+import { extractPngTextChunk, replacePngTextChunk } from '@vali98/react-native-png-utils'
 import { Asset } from 'expo-asset'
 import { getDocumentAsync } from 'expo-document-picker'
-import { readBase64Async, readStringAsync } from '../lib/utils/File'
+import JSZip from 'jszip'
 import {
+    fileExists,
+    readBase64Async,
+    readStringAsync,
+    shareOrSaveFile,
+    writeCacheFile,
+} from '../lib/utils/File'
+import {
+    allocateUniquePngName,
     createCard,
     createDefaultCard,
     deleteCardImage,
     duplicateCard,
+    exportCards,
     updateCardImage,
     importCards,
     importCardImage,
@@ -24,6 +33,7 @@ jest.mock('@vali98/react-native-png-utils', () => ({
 }))
 jest.mock('expo-asset', () => ({ Asset: { loadAsync: jest.fn() } }))
 jest.mock('../assets/models/aibot.raw', () => 123)
+jest.mock('../assets/user.png', () => 456)
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: jest.fn() }))
 jest.mock('expo-file-system', () => ({ Paths: { document: { uri: '/document/' } } }))
 jest.mock('../lib/state/Logger', () => ({
@@ -33,6 +43,8 @@ jest.mock('../lib/utils/File', () => ({
     fileExists: jest.fn(() => true),
     readBase64Async: jest.fn(),
     readStringAsync: jest.fn(),
+    writeCacheFile: jest.fn((filename: string) => `/cache/${filename}`),
+    shareOrSaveFile: jest.fn(async () => {}),
 }))
 jest.mock('../lib/state/characters/images', () => {
     let nextImageId = 100
@@ -264,6 +276,53 @@ test.each([
     }
 )
 
+test('creation forwards folderId when provided and omits it when null or undefined', async () => {
+    const card = buildBlankCharacterCard('Foldered')
+    expect(await createCard(card, { folderId: 7 })).toBe(2)
+    expect(db.create.card).toHaveBeenLastCalledWith(card, {
+        type: 'character',
+        image_id: expect.any(Number),
+        folderId: 7,
+    })
+
+    expect(await createCard(card, { folderId: null })).toBe(2)
+    expect(db.create.card).toHaveBeenLastCalledWith(card, {
+        type: 'character',
+        image_id: expect.any(Number),
+    })
+})
+
+test('bulk imports forward folderId for JSON and PNG cards when provided', async () => {
+    jest.mocked(getDocumentAsync).mockResolvedValueOnce({
+        canceled: false,
+        assets: [
+            { name: 'one.json', uri: '/one.json', mimeType: 'application/json' },
+            { name: 'two.png', uri: '/two.png', mimeType: 'image/png' },
+        ],
+    } as never)
+    jest.mocked(readStringAsync).mockResolvedValueOnce(
+        JSON.stringify(buildBlankCharacterCard('JSON Char'))
+    )
+    jest.mocked(readBase64Async).mockResolvedValueOnce('png-data')
+    jest.mocked(extractPngTextChunk).mockReturnValueOnce([
+        { keyword: 'chara', data: JSON.stringify(buildBlankCharacterCard('PNG Char')) },
+    ])
+
+    await importCards({ folderId: 12 })
+
+    expect(db.create.card).toHaveBeenCalledTimes(2)
+    expect(db.create.card).toHaveBeenNthCalledWith(1, expect.anything(), {
+        type: 'character',
+        image_id: expect.any(Number),
+        folderId: 12,
+    })
+    expect(db.create.card).toHaveBeenNthCalledWith(2, expect.anything(), {
+        type: 'character',
+        image_id: expect.any(Number),
+        folderId: 12,
+    })
+})
+
 test('an image-copy failure returns its error after rolling back the imported card', async () => {
     const error = new Error('copy failed')
     jest.mocked(readBase64Async).mockResolvedValueOnce('png-data')
@@ -275,4 +334,76 @@ test('an image-copy failure returns its error after rolling back the imported ca
     expect(cards.has(2)).toBe(false)
     expect(deleteImageFile).toHaveBeenCalled()
     expect(Logger.errorToast).not.toHaveBeenCalled()
+})
+
+test('allocateUniquePngName deduplicates repeated and unsafe names', () => {
+    const used = new Set<string>()
+    expect(allocateUniquePngName('Alice', used)).toBe('Alice.png')
+    expect(allocateUniquePngName('Alice', used)).toBe('Alice_2.png')
+    expect(allocateUniquePngName('alice', used)).toBe('alice_3.png')
+    expect(allocateUniquePngName('   ', used)).toBe('Character.png')
+    expect(allocateUniquePngName('A/B:C', used)).toBe('A_B_C.png')
+})
+
+test('exportCards exports a single character as PNG directly and falls back to bundled PNG when avatar is missing', async () => {
+    jest.mocked(fileExists).mockReturnValueOnce(false)
+    jest.mocked(Asset.loadAsync).mockResolvedValueOnce([{ localUri: '/bundle/user.png' }] as never)
+    jest.mocked(readBase64Async).mockResolvedValueOnce('ZmFsbGJhY2stcG5n')
+    jest.mocked(replacePngTextChunk).mockReturnValueOnce('ZXhwb3J0ZWQtcG5n')
+    const progress: { completed: number; total: number }[] = []
+
+    const count = await exportCards([1], (p) => progress.push(p))
+
+    expect(count).toBe(1)
+    expect(progress).toEqual([{ completed: 1, total: 1 }])
+    expect(writeCacheFile).toHaveBeenCalledWith('Persona.png', 'ZXhwb3J0ZWQtcG5n', 'base64')
+    expect(shareOrSaveFile).toHaveBeenCalledWith('/cache/Persona.png', {
+        mimeType: 'image/png',
+        UTI: 'public.png',
+        dialogTitle: 'Persona.png',
+    })
+})
+
+test('exportCards packs multiple characters into a deduplicated ZIP archive', async () => {
+    cards.set(2, {
+        ...buildBlankCharacterCard('Persona').data,
+        id: 2,
+        type: 'character',
+        image_id: 21,
+        background_image: null,
+        tags: [],
+        alternate_greetings: [],
+        links: [],
+    } as unknown as CharacterCard)
+    jest.mocked(fileExists).mockReturnValue(true)
+    jest.mocked(readBase64Async).mockResolvedValue('cG5nLWRhdGE=')
+    jest.mocked(replacePngTextChunk)
+        .mockReturnValueOnce(Buffer.from('png-one').toString('base64'))
+        .mockReturnValueOnce(Buffer.from('png-two').toString('base64'))
+
+    const progress: { completed: number; total: number }[] = []
+    const count = await exportCards([1, 2], (p) => progress.push(p))
+
+    expect(count).toBe(2)
+    expect(progress).toEqual([
+        { completed: 1, total: 2 },
+        { completed: 2, total: 2 },
+    ])
+    expect(writeCacheFile).toHaveBeenCalledWith(
+        expect.stringMatching(/^chatterui-characters-\d+\.zip$/),
+        expect.any(Uint8Array)
+    )
+    const [archiveName, zipBytes] = jest.mocked(writeCacheFile).mock.calls[0] as [
+        string,
+        Uint8Array,
+    ]
+    const zip = await JSZip.loadAsync(zipBytes)
+    expect(Object.keys(zip.files).sort()).toEqual(['Persona.png', 'Persona_2.png'])
+    expect(await zip.file('Persona.png')!.async('string')).toBe('png-one')
+    expect(await zip.file('Persona_2.png')!.async('string')).toBe('png-two')
+    expect(shareOrSaveFile).toHaveBeenCalledWith(`/cache/${archiveName}`, {
+        mimeType: 'application/zip',
+        UTI: 'public.zip-archive',
+        dialogTitle: archiveName,
+    })
 })

@@ -17,6 +17,7 @@ export type CharacterCardSummary = {
     tags: string[]
     links: CharacterCard['links']
     folderId?: number | null
+    folderName?: string | null
     latestSwipeText?: string
     latestMessageName?: string
     latestChatId?: number
@@ -46,10 +47,13 @@ export type CharacterCardListPageOptions = {
 
 export type CreateCardDatabaseOptions = Partial<
     Pick<typeof characters.$inferInsert, 'type' | 'image_id'>
->
+> & {
+    folderId?: number | null
+}
 export type CreateCardOptions = {
     type?: CharacterCardType
     imageUri?: string
+    folderId?: number | null
 }
 export type CharacterCardChanges = Partial<Omit<typeof characters.$inferInsert, 'id'>>
 

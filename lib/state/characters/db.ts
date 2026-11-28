@@ -202,8 +202,9 @@ namespace live {
             },
             where: (characters) => {
                 const base = eq(characters.type, type)
-                const search = searchText
-                    ? like(characters.name, `%${searchText.trim().toLocaleLowerCase()}%`)
+                const trimmedSearch = searchText.trim()
+                const search = trimmedSearch
+                    ? like(characters.name, `%${trimmedSearch.toLocaleLowerCase()}%`)
                     : undefined
                 const hidden =
                     hiddenTags.length > 0
@@ -307,6 +308,13 @@ namespace live {
                     columns: {
                         folder_id: true,
                     },
+                    with: {
+                        folder: {
+                            columns: {
+                                name: true,
+                            },
+                        },
+                    },
                 },
             },
             orderBy: [
@@ -340,18 +348,50 @@ namespace live {
     }
 }
 
+type DatabaseTransaction = Parameters<Parameters<typeof database.transaction>[0]>[0]
+
+const assignCharacterToFolderIfExists = async (
+    tx: DatabaseTransaction,
+    characterId: number,
+    folderId: number
+) => {
+    const folder = await tx.query.characterFolders.findFirst({
+        where: eq(characterFolders.id, folderId),
+        columns: { id: true },
+    })
+    if (!folder) return
+    await tx
+        .insert(characterFolderMembers)
+        .values({ character_id: characterId, folder_id: folderId })
+        .onConflictDoUpdate({
+            target: characterFolderMembers.character_id,
+            set: { folder_id: folderId },
+        })
+}
+
 namespace create {
     export const blankCard = async (
         name: string,
-        { type = 'character' }: { type?: CharacterCardType } = {}
+        { type = 'character', folderId }: { type?: CharacterCardType; folderId?: number | null } = {}
     ) => {
         const { data } = buildBlankCharacterCard(name)
 
-        const [{ id }] = await database
-            .insert(characters)
-            .values({ ...data, type: type })
-            .returning({ id: characters.id })
-        return id
+        if (type !== 'character' || typeof folderId !== 'number') {
+            const [{ id }] = await database
+                .insert(characters)
+                .values({ ...data, type: type })
+                .returning({ id: characters.id })
+            return id
+        }
+
+        return await database.transaction(async (tx) => {
+            const [{ id }] = await tx
+                .insert(characters)
+                .values({ ...data, type: type })
+                .returning({ id: characters.id })
+            await assignCharacterToFolderIfExists(tx, id, folderId)
+            return id
+        })
     }
 
     export const alternateGreeting = async (characterId: number) => {
@@ -367,7 +407,7 @@ namespace create {
 
     export const card = async (
         card: CharacterCardV2,
-        { type = 'character', image_id: imageId }: CreateCardDatabaseOptions = {}
+        { type = 'character', image_id: imageId, folderId }: CreateCardDatabaseOptions = {}
     ) => {
         const { data } = card
         const created = await database.transaction(async (tx) => {
@@ -406,6 +446,9 @@ namespace create {
                         tag_id: item.id,
                     }))
                     await tx.insert(characterTags).values(characterTagRows).onConflictDoNothing()
+                }
+                if (type === 'character' && typeof folderId === 'number') {
+                    await assignCharacterToFolderIfExists(tx, id, folderId)
                 }
                 return { id, image_id }
             } catch (error) {
@@ -585,23 +628,31 @@ export type CharacterCardQuery = ReturnType<typeof live.card>
 // ---------------------------------------------------------------------------
 
 namespace folders {
-    /** List all folders (top-level and nested). */
+    /** List all folders (top-level and nested), pinned first then alphabetical. */
     export const list = () => {
         return database.query.characterFolders.findMany({
-            orderBy: characterFolders.name,
+            orderBy: [desc(characterFolders.isPinned), asc(characterFolders.name)],
         })
     }
 
-    /** Live query: all folders, ordered by name. */
+    /** Live query: all folders, pinned first then ordered by name. */
     export const liveList = () => {
         return database.query.characterFolders.findMany({
-            orderBy: characterFolders.name,
+            orderBy: [desc(characterFolders.isPinned), asc(characterFolders.name)],
             with: {
                 members: {
                     columns: { character_id: true },
                 },
             },
         })
+    }
+
+    /** Pin or unpin a folder. */
+    export const setPinned = async (folderId: number, isPinned: boolean) => {
+        await database
+            .update(characterFolders)
+            .set({ isPinned })
+            .where(eq(characterFolders.id, folderId))
     }
 
     /** Create a new folder. Returns the new folder id. */

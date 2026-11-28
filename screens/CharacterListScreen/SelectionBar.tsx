@@ -1,6 +1,7 @@
 import AntDesign, { type AntDesignIconName } from '@react-native-vector-icons/ant-design/static'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useShallow } from 'zustand/react/shallow'
 
 import Alert from '@components/views/Alert'
@@ -23,6 +24,11 @@ const SelectionBar: React.FC<SelectionBarProps> = ({ allCharacterIds }) => {
     const { color } = Theme.useTheme()
     const folderPickerRef = useBottomSheetRef()
     const currentFolderId = useCharacterSortStore((state) => state.currentFolderId)
+    const [exportProgress, setExportProgress] = useState<{
+        completed: number
+        total: number
+    } | null>(null)
+    const isExporting = exportProgress !== null
 
     const { selectedIds, exitSelectionMode, selectAll, deselectAll } = useSelectionStore(
         useShallow((state) => ({
@@ -91,6 +97,31 @@ const SelectionBar: React.FC<SelectionBarProps> = ({ allCharacterIds }) => {
         exitSelectionMode()
     }
 
+    const handleExport = async () => {
+        if (selectedIds.length === 0 || isExporting) return
+        const idsToExport = [...selectedIds]
+        setExportProgress({ completed: 0, total: idsToExport.length })
+        try {
+            const exportedCount = await Characters.actions.exportCards(idsToExport, (progress) => {
+                setExportProgress(progress)
+            })
+            Logger.info(
+                t('character.selection.exported', {
+                    count: exportedCount,
+                    defaultValue: 'Exported {{count}} characters',
+                })
+            )
+            exitSelectionMode()
+        } catch (error) {
+            Logger.errorToast(
+                t('character.selection.exportFailed', 'Failed to export characters'),
+                error
+            )
+        } finally {
+            setExportProgress(null)
+        }
+    }
+
     return (
         <>
             <View
@@ -120,17 +151,32 @@ const SelectionBar: React.FC<SelectionBarProps> = ({ allCharacterIds }) => {
                             }
                             onPress={handleToggleAll}
                             color={color.text._300}
+                            disabled={isExporting}
                         />
                         <HeaderChip
                             icon="close"
                             label={t('character.selection.cancel', 'Cancel')}
                             onPress={exitSelectionMode}
                             color={color.text._400}
+                            disabled={isExporting}
                         />
                     </View>
                 </View>
 
-                {/* Bottom row: Move to Folder + Delete */}
+                {isExporting && (
+                    <View style={styles.progressRow}>
+                        <ActivityIndicator size="small" color={color.primary._500} />
+                        <Text style={[styles.progressText, { color: color.text._300 }]}>
+                            {t('character.selection.exportProgress', {
+                                completed: exportProgress.completed,
+                                total: exportProgress.total,
+                                defaultValue: 'Exporting {{completed}}/{{total}}…',
+                            })}
+                        </Text>
+                    </View>
+                )}
+
+                {/* Bottom row: Move to Folder + Export + Delete */}
                 <View style={styles.bottomRow}>
                     <ActionPill
                         icon="folder"
@@ -138,7 +184,17 @@ const SelectionBar: React.FC<SelectionBarProps> = ({ allCharacterIds }) => {
                         onPress={handleMove}
                         backgroundColor={color.primary._500}
                         foregroundColor={color.text._100}
-                        disabled={selectedIds.length === 0}
+                        disabled={selectedIds.length === 0 || isExporting}
+                    />
+                    <ActionPill
+                        icon="upload"
+                        label={t('character.selection.export', 'Export')}
+                        onPress={() => {
+                            void handleExport()
+                        }}
+                        backgroundColor={color.neutral._200}
+                        foregroundColor={color.text._100}
+                        disabled={selectedIds.length === 0 || isExporting}
                     />
                     <ActionPill
                         icon="delete"
@@ -146,7 +202,7 @@ const SelectionBar: React.FC<SelectionBarProps> = ({ allCharacterIds }) => {
                         onPress={handleDelete}
                         backgroundColor={color.neutral._200}
                         foregroundColor={color.error._300}
-                        disabled={selectedIds.length === 0}
+                        disabled={selectedIds.length === 0 || isExporting}
                     />
                 </View>
             </View>
@@ -170,12 +226,18 @@ type HeaderChipProps = {
     label: string
     onPress: () => void
     color: string
+    disabled?: boolean
 }
 
-const HeaderChip: React.FC<HeaderChipProps> = ({ icon, label, onPress, color }) => (
+const HeaderChip: React.FC<HeaderChipProps> = ({ icon, label, onPress, color, disabled }) => (
     <Pressable
         onPress={onPress}
-        style={({ pressed }) => [styles.chip, pressed && styles.pressed]}>
+        disabled={disabled}
+        style={({ pressed }) => [
+            styles.chip,
+            disabled && styles.disabled,
+            pressed && !disabled && styles.pressed,
+        ]}>
         <AntDesign name={icon} size={16} color={color} />
         <Text style={[styles.chipLabel, { color }]} numberOfLines={1}>
             {label}
@@ -209,8 +271,12 @@ const ActionPill: React.FC<ActionPillProps> = ({
             disabled && styles.disabled,
             pressed && !disabled && styles.pressed,
         ]}>
-        <AntDesign name={icon} size={16} color={foregroundColor} />
-        <Text style={[styles.actionPillLabel, { color: foregroundColor }]} numberOfLines={1}>
+        <AntDesign name={icon} size={15} color={foregroundColor} />
+        <Text
+            style={[styles.actionPillLabel, { color: foregroundColor }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}>
             {label}
         </Text>
     </Pressable>
@@ -249,20 +315,30 @@ const styles = StyleSheet.create({
     },
     bottomRow: {
         flexDirection: 'row',
-        columnGap: 10,
+        columnGap: 8,
+    },
+    progressRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        columnGap: 8,
+    },
+    progressText: {
+        fontSize: 13,
+        fontWeight: '500',
     },
     actionPill: {
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        columnGap: 8,
+        columnGap: 6,
         paddingVertical: 10,
-        paddingHorizontal: 12,
+        paddingHorizontal: 8,
         borderRadius: 8,
     },
     actionPillLabel: {
-        fontSize: 14,
+        flexShrink: 1,
+        fontSize: 13,
         fontWeight: '600',
     },
     pressed: {

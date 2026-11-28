@@ -2,9 +2,17 @@ import { extractPngTextChunk, replacePngTextChunk } from '@vali98/react-native-p
 import { Asset } from 'expo-asset'
 import * as DocumentPicker from 'expo-document-picker'
 import { t } from 'i18next'
+import JSZip from 'jszip'
 
 import { Logger } from '@lib/state/Logger'
-import { fileExists, readBase64Async, readStringAsync, saveStringToDownload } from '@lib/utils/File'
+import {
+    fileExists,
+    readBase64Async,
+    readStringAsync,
+    saveStringToDownload,
+    shareOrSaveFile,
+    writeCacheFile,
+} from '@lib/utils/File'
 
 import { db } from './db'
 import { copyImageFile, createImageId, deleteImageFile, getCardImageUri } from './images'
@@ -88,9 +96,13 @@ export const deleteCardBackground = async (characterId: number) => {
 
 export const createCard = async (
     card: CharacterCardV2,
-    { imageUri = '', type = 'character' }: CreateCardOptions = {}
+    { imageUri = '', type = 'character', folderId }: CreateCardOptions = {}
 ) => {
-    const created = await db.create.card(card, { type: type, image_id: createImageId() })
+    const created = await db.create.card(card, {
+        type: type,
+        image_id: createImageId(),
+        ...(typeof folderId === 'number' && { folderId }),
+    })
     if (!created) return
     if (imageUri) {
         try {
@@ -143,7 +155,11 @@ const importFailure = (error: unknown): CardImportResult => ({
     error: error instanceof Error ? error : new Error(String(error)),
 })
 
-const importCardData = async (data: unknown, imageUri?: string): Promise<CardImportResult> => {
+const importCardData = async (
+    data: unknown,
+    imageUri?: string,
+    folderId?: number | null
+): Promise<CardImportResult> => {
     try {
         const v2 = characterCardV2Schema.safeParse(data)
         let card: CharacterCardV2
@@ -153,7 +169,10 @@ const importCardData = async (data: unknown, imageUri?: string): Promise<CardImp
             if (!v1.success) return importFailure(t('character.editor.errors.invalidCharacterCard'))
             card = buildBlankCharacterCard(v1.data.name, v1.data)
         }
-        const id = await createCard(card, { imageUri })
+        const id = await createCard(card, {
+            imageUri,
+            ...(typeof folderId === 'number' && { folderId }),
+        })
         if (id === undefined) return importFailure(t('character.editor.errors.createFailed'))
         return { success: true, data: id }
     } catch (error) {
@@ -161,7 +180,10 @@ const importCardData = async (data: unknown, imageUri?: string): Promise<CardImp
     }
 }
 
-export const importCardImage = async (imageUri: string): Promise<CardImportResult> => {
+export const importCardImage = async (
+    imageUri: string,
+    folderId?: number | null
+): Promise<CardImportResult> => {
     try {
         const file = await readBase64Async(imageUri)
         if (!file) return importFailure(t('character.editor.errors.createFromImage'))
@@ -169,13 +191,13 @@ export const importCardImage = async (imageUri: string): Promise<CardImportResul
             keywords: CHARACTER_CARD_TEXT_CHUNK_KEYWORDS,
         })
         if (!result) return importFailure(t('character.editor.errors.createFromImage'))
-        return await importCardData(JSON.parse(result.data), imageUri)
+        return await importCardData(JSON.parse(result.data), imageUri, folderId)
     } catch (error) {
         return importFailure(error)
     }
 }
 
-export const importCards = async () => {
+export const importCards = async ({ folderId }: { folderId?: number | null } = {}) => {
     if (useCharacterImportState.getState().isImporting) return
     useCharacterImportState.setState({
         isImporting: true,
@@ -200,9 +222,9 @@ export const importCards = async () => {
                     let imported: CardImportResult
                     if (item.mimeType?.includes('application/json')) {
                         const data = await readStringAsync(item.uri)
-                        imported = await importCardData(JSON.parse(data))
+                        imported = await importCardData(JSON.parse(data), undefined, folderId)
                     } else if (item.mimeType?.includes('image/')) {
-                        imported = await importCardImage(item.uri)
+                        imported = await importCardImage(item.uri, folderId)
                     } else throw new Error(t('character.editor.errors.invalidCharacterCard'))
                     succeeded = imported.success
                     if (!imported.success)
@@ -246,6 +268,109 @@ export const exportCard = async (characterId: number) => {
     } else {
         await saveStringToDownload(cardJson, exportedFileName + '.json', 'utf8')
     }
+}
+
+const sanitizeExportBaseName = (name: string | undefined | null) => {
+    const cleaned = (name ?? '').trim().replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    return cleaned.length > 0 ? cleaned : 'Character'
+}
+
+export const allocateUniquePngName = (
+    name: string | undefined | null,
+    usedNames: Set<string>
+) => {
+    const base = sanitizeExportBaseName(name)
+    let candidate = `${base}.png`
+    let suffix = 2
+    while (usedNames.has(candidate.toLowerCase())) {
+        candidate = `${base}_${suffix}.png`
+        suffix++
+    }
+    usedNames.add(candidate.toLowerCase())
+    return candidate
+}
+
+const buildCardPngData = async (
+    character: NonNullable<Awaited<ReturnType<typeof db.query.card>>>,
+    loadFallbackPng: () => Promise<string>
+) => {
+    const cardJson = JSON.stringify(toCharacterCardV2(character))
+    const chunks = [{ data: cardJson, keyword: 'chara', b64encode: true }]
+    const options = { removeKeywords: CHARACTER_CARD_TEXT_CHUNK_KEYWORDS }
+    const imageUri = getCardImageUri(character.image_id)
+    if (fileExists(imageUri)) {
+        const fileData = await readBase64Async(imageUri)
+        if (fileData) {
+            try {
+                return replacePngTextChunk(fileData, chunks, options)
+            } catch {
+                // Non-PNG or unreadable image file: fall back to bundled PNG template.
+            }
+        }
+    }
+    const fallbackData = await loadFallbackPng()
+    return replacePngTextChunk(fallbackData, chunks, options)
+}
+
+export type BulkExportProgress = {
+    completed: number
+    total: number
+}
+
+export const exportCards = async (
+    characterIds: number[],
+    onProgress?: (progress: BulkExportProgress) => void
+): Promise<number> => {
+    if (characterIds.length === 0) return 0
+
+    let fallbackPng: string | undefined
+    const loadFallbackPng = async () => {
+        if (fallbackPng) return fallbackPng
+        const [asset] = await Asset.loadAsync(require('../../../assets/user.png'))
+        if (!asset?.localUri) throw new Error('Default avatar asset has no local URI')
+        const base64 = await readBase64Async(asset.localUri)
+        if (!base64) throw new Error('Default avatar asset could not be read')
+        fallbackPng = base64
+        return base64
+    }
+
+    const usedNames = new Set<string>()
+    const entries: { filename: string; base64: string }[] = []
+    const total = characterIds.length
+
+    for (let i = 0; i < total; i++) {
+        const character = await db.query.card(characterIds[i])
+        if (!character) throw new Error(`Exported card ${characterIds[i]} does not exist`)
+        const filename = allocateUniquePngName(character.name, usedNames)
+        const base64 = await buildCardPngData(character, loadFallbackPng)
+        entries.push({ filename, base64 })
+        onProgress?.({ completed: i + 1, total })
+    }
+
+    if (entries.length === 1) {
+        const [{ filename, base64 }] = entries
+        const fileUri = writeCacheFile(filename, base64, 'base64')
+        await shareOrSaveFile(fileUri, {
+            mimeType: 'image/png',
+            UTI: 'public.png',
+            dialogTitle: filename,
+        })
+        return 1
+    }
+
+    const zip = new JSZip()
+    for (const entry of entries) {
+        zip.file(entry.filename, entry.base64, { base64: true })
+    }
+    const zipBytes = await zip.generateAsync({ type: 'uint8array' })
+    const archiveName = `chatterui-characters-${Date.now()}.zip`
+    const archiveUri = writeCacheFile(archiveName, zipBytes)
+    await shareOrSaveFile(archiveUri, {
+        mimeType: 'application/zip',
+        UTI: 'public.zip-archive',
+        dialogTitle: archiveName,
+    })
+    return entries.length
 }
 
 export const createDefaultCard = async (): Promise<CardImportResult> => {

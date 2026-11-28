@@ -17,6 +17,7 @@ export const characterFolders = sqliteTable('character_folders', {
     name: text('name').notNull(),
     // nullable self-reference: null means top-level folder
     parent_id: integer('parent_id', { mode: 'number' }),
+    isPinned: integer('is_pinned', { mode: 'boolean' }).default(false).notNull(),
 })
 
 export const characterFolderMembers = sqliteTable(

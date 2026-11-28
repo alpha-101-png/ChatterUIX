@@ -1,3 +1,4 @@
+import AntDesign from '@react-native-vector-icons/ant-design/static'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { View } from 'react-native'
@@ -15,6 +16,7 @@ import { useLiveQueryAsync } from '@lib/hooks/liveQuery'
 import { Characters } from '@lib/state/characters'
 import { useCharacterSortStore } from '@lib/state/characters/sortStore'
 import { Logger } from '@lib/state/Logger'
+import { Theme } from '@lib/theme/ThemeManager'
 
 type FolderManagerSheetProps = {
     ref: BottomSheetRef
@@ -22,6 +24,7 @@ type FolderManagerSheetProps = {
 
 const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
     const { t } = useTranslation()
+    const { color } = Theme.useTheme()
     const renameRef = useBottomSheetRef()
     const [editingFolder, setEditingFolder] = useState<{ id: number; name: string } | null>(null)
 
@@ -111,7 +114,24 @@ const FolderManagerSheet = ({ ref }: FolderManagerSheetProps) => {
                                     columnGap: 8,
                                 }}
                                 onPress={() => handleRename(item)}>
-                                <TText style={{ flex: 1 }}>{item.name}</TText>
+                                <View
+                                    style={{
+                                        flex: 1,
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        columnGap: 6,
+                                    }}>
+                                    <TText style={{ flexShrink: 1 }} numberOfLines={1}>
+                                        {item.name}
+                                    </TText>
+                                    {item.isPinned && (
+                                        <AntDesign
+                                            name="pushpin"
+                                            size={13}
+                                            color={color.primary._500}
+                                        />
+                                    )}
+                                </View>
                                 <TText color="500" size={12}>
                                     {t('character.folders.manager.memberCount', {
                                         count: item.members.length,

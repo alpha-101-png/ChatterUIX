@@ -21,6 +21,7 @@ type CharacterListingProps = {
     navigationPending: RefObject<boolean>
     selectionMode?: boolean
     selected?: boolean
+    showFolderBadge?: boolean
 }
 
 const CharacterListing: React.FC<CharacterListingProps> = ({
@@ -28,6 +29,7 @@ const CharacterListing: React.FC<CharacterListingProps> = ({
     navigationPending,
     selectionMode,
     selected,
+    showFolderBadge = false,
 }) => {
     const { t } = useTranslation()
     const [showTags] = useMMKVBoolean(AppSettings.ShowTags)
@@ -96,6 +98,25 @@ const CharacterListing: React.FC<CharacterListingProps> = ({
                         <Text numberOfLines={1} ellipsizeMode="tail" style={styles.previewText}>
                             {getPreviewText()}
                         </Text>
+                        {showFolderBadge && (
+                            <View style={styles.folderBadgeRow}>
+                                <View style={styles.folderBadge}>
+                                    <AntDesign
+                                        name="folder"
+                                        size={11}
+                                        color={
+                                            character.folderId
+                                                ? color.primary._500
+                                                : color.text._400
+                                        }
+                                    />
+                                    <Text style={styles.folderBadgeText} numberOfLines={1}>
+                                        {character.folderName ??
+                                            t('character.folders.ungrouped', 'Ungrouped')}
+                                    </Text>
+                                </View>
+                            </View>
+                        )}
                     </View>
                 </View>
             </CharacterActionsMenu>
@@ -167,6 +188,29 @@ const useStyles = () => {
         previewText: {
             marginTop: spacing.s,
             color: color.text._500,
+        },
+
+        folderBadgeRow: {
+            flexDirection: 'row',
+            marginTop: spacing.sm,
+        },
+
+        folderBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            columnGap: spacing.s,
+            backgroundColor: color.neutral._200,
+            borderRadius: borderRadius.xl,
+            paddingHorizontal: spacing.m,
+            paddingVertical: spacing.xs,
+            maxWidth: '100%',
+        },
+
+        folderBadgeText: {
+            flexShrink: 1,
+            fontSize: fontSize.s,
+            fontWeight: '500',
+            color: color.text._300,
         },
 
         checkboxContainer: {
